@@ -57,7 +57,10 @@ class EnviroLink_AI_Aggregator {
             array(
                 'url' => 'https://news.mongabay.com/feed/',
                 'name' => 'Mongabay',
-                'enabled' => true
+                'enabled' => true,
+                'schedule_type' => 'hourly',
+                'schedule_times' => 1,
+                'last_processed' => 0
             )
         );
         
@@ -145,12 +148,15 @@ class EnviroLink_AI_Aggregator {
         // Add feed
         if (isset($_POST['envirolink_add_feed'])) {
             check_admin_referer('envirolink_add_feed');
-            
+
             $feeds = get_option('envirolink_feeds', array());
             $feeds[] = array(
                 'url' => esc_url_raw($_POST['feed_url']),
                 'name' => sanitize_text_field($_POST['feed_name']),
-                'enabled' => true
+                'enabled' => true,
+                'schedule_type' => sanitize_text_field($_POST['schedule_type']),
+                'schedule_times' => absint($_POST['schedule_times']),
+                'last_processed' => 0
             );
             update_option('envirolink_feeds', $feeds);
             
@@ -174,13 +180,27 @@ class EnviroLink_AI_Aggregator {
         // Toggle feed
         if (isset($_GET['toggle_feed'])) {
             check_admin_referer('envirolink_toggle_feed_' . $_GET['toggle_feed']);
-            
+
             $feeds = get_option('envirolink_feeds', array());
             $index = intval($_GET['toggle_feed']);
             if (isset($feeds[$index])) {
                 $feeds[$index]['enabled'] = !$feeds[$index]['enabled'];
                 update_option('envirolink_feeds', $feeds);
                 echo '<div class="notice notice-success"><p>Feed updated!</p></div>';
+            }
+        }
+
+        // Edit feed schedule
+        if (isset($_POST['envirolink_edit_feed'])) {
+            check_admin_referer('envirolink_edit_feed');
+
+            $feeds = get_option('envirolink_feeds', array());
+            $index = intval($_POST['feed_index']);
+            if (isset($feeds[$index])) {
+                $feeds[$index]['schedule_type'] = sanitize_text_field($_POST['schedule_type']);
+                $feeds[$index]['schedule_times'] = absint($_POST['schedule_times']);
+                update_option('envirolink_feeds', $feeds);
+                echo '<div class="notice notice-success"><p>Feed schedule updated!</p></div>';
             }
         }
         
@@ -313,15 +333,33 @@ class EnviroLink_AI_Aggregator {
                                 <label for="feed_url">RSS Feed URL</label>
                             </th>
                             <td>
-                                <input type="url" id="feed_url" name="feed_url" 
-                                       class="regular-text" required 
+                                <input type="url" id="feed_url" name="feed_url"
+                                       class="regular-text" required
                                        placeholder="https://example.com/feed" />
                             </td>
                         </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="schedule_times">Import Frequency</label>
+                            </th>
+                            <td>
+                                <input type="number" id="schedule_times" name="schedule_times"
+                                       value="1" min="1" max="24" style="width: 60px;" required />
+                                times per
+                                <select name="schedule_type" id="schedule_type" required>
+                                    <option value="hourly">Hour</option>
+                                    <option value="daily" selected>Day</option>
+                                    <option value="weekly">Week</option>
+                                    <option value="monthly">Month</option>
+                                </select>
+                                <p class="description">How often to import articles from this feed</p>
+                            </td>
+                        </tr>
                     </table>
-                    
+
                     <p class="submit">
-                        <input type="submit" name="envirolink_add_feed" 
+                        <input type="submit" name="envirolink_add_feed"
                                class="button button-primary" value="Add Feed" />
                     </p>
                 </form>
@@ -333,16 +371,28 @@ class EnviroLink_AI_Aggregator {
                             <th>Status</th>
                             <th>Name</th>
                             <th>URL</th>
+                            <th>Schedule</th>
+                            <th>Last Processed</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($feeds)): ?>
                             <tr>
-                                <td colspan="4">No feeds configured</td>
+                                <td colspan="6">No feeds configured</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($feeds as $index => $feed): ?>
+                                <?php
+                                // Ensure backward compatibility with old feeds
+                                $schedule_type = isset($feed['schedule_type']) ? $feed['schedule_type'] : 'hourly';
+                                $schedule_times = isset($feed['schedule_times']) ? $feed['schedule_times'] : 1;
+                                $last_processed = isset($feed['last_processed']) ? $feed['last_processed'] : 0;
+
+                                $schedule_label = $schedule_type === 'hourly' ? 'hour' :
+                                                 ($schedule_type === 'daily' ? 'day' :
+                                                 ($schedule_type === 'weekly' ? 'week' : 'month'));
+                                ?>
                                 <tr>
                                     <td>
                                         <?php if ($feed['enabled']): ?>
@@ -358,12 +408,31 @@ class EnviroLink_AI_Aggregator {
                                         </a>
                                     </td>
                                     <td>
-                                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&toggle_feed=' . $index), 'envirolink_toggle_feed_' . $index); ?>" 
+                                        <?php echo esc_html($schedule_times); ?> / <?php echo esc_html($schedule_label); ?>
+                                    </td>
+                                    <td>
+                                        <?php
+                                        if ($last_processed) {
+                                            echo date('Y-m-d H:i', $last_processed);
+                                        } else {
+                                            echo 'Never';
+                                        }
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="button button-small edit-schedule-btn"
+                                                data-index="<?php echo $index; ?>"
+                                                data-schedule-type="<?php echo esc_attr($schedule_type); ?>"
+                                                data-schedule-times="<?php echo esc_attr($schedule_times); ?>">
+                                            Edit Schedule
+                                        </button>
+
+                                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&toggle_feed=' . $index), 'envirolink_toggle_feed_' . $index); ?>"
                                            class="button button-small">
                                             <?php echo $feed['enabled'] ? 'Disable' : 'Enable'; ?>
                                         </a>
-                                        
-                                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&delete_feed=' . $index), 'envirolink_delete_feed_' . $index); ?>" 
+
+                                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&delete_feed=' . $index), 'envirolink_delete_feed_' . $index); ?>"
                                            class="button button-small"
                                            onclick="return confirm('Are you sure you want to delete this feed?');">
                                             Delete
@@ -374,9 +443,44 @@ class EnviroLink_AI_Aggregator {
                         <?php endif; ?>
                     </tbody>
                 </table>
+
+                <!-- Edit Schedule Modal -->
+                <div id="edit-schedule-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999;">
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 5px; min-width: 400px;">
+                        <h2>Edit Feed Schedule</h2>
+                        <form method="post" action="" id="edit-schedule-form">
+                            <?php wp_nonce_field('envirolink_edit_feed'); ?>
+                            <input type="hidden" name="feed_index" id="edit-feed-index" value="" />
+
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row">
+                                        <label for="edit-schedule-times">Import Frequency</label>
+                                    </th>
+                                    <td>
+                                        <input type="number" id="edit-schedule-times" name="schedule_times"
+                                               value="1" min="1" max="24" style="width: 60px;" required />
+                                        times per
+                                        <select name="schedule_type" id="edit-schedule-type" required>
+                                            <option value="hourly">Hour</option>
+                                            <option value="daily">Day</option>
+                                            <option value="weekly">Week</option>
+                                            <option value="monthly">Month</option>
+                                        </select>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p>
+                                <input type="submit" name="envirolink_edit_feed" class="button button-primary" value="Save Schedule" />
+                                <button type="button" class="button" id="cancel-edit-schedule">Cancel</button>
+                            </p>
+                        </form>
+                    </div>
+                </div>
             </div>
         </div>
-        
+
         <script>
         jQuery(document).ready(function($) {
             // Tab switching
@@ -416,6 +520,30 @@ class EnviroLink_AI_Aggregator {
                     }
                 });
             });
+
+            // Edit schedule modal
+            $('.edit-schedule-btn').click(function() {
+                var index = $(this).data('index');
+                var scheduleType = $(this).data('schedule-type');
+                var scheduleTimes = $(this).data('schedule-times');
+
+                $('#edit-feed-index').val(index);
+                $('#edit-schedule-type').val(scheduleType);
+                $('#edit-schedule-times').val(scheduleTimes);
+
+                $('#edit-schedule-modal').fadeIn();
+            });
+
+            $('#cancel-edit-schedule').click(function() {
+                $('#edit-schedule-modal').fadeOut();
+            });
+
+            // Close modal on background click
+            $('#edit-schedule-modal').click(function(e) {
+                if (e.target === this) {
+                    $(this).fadeOut();
+                }
+            });
         });
         </script>
         
@@ -449,6 +577,44 @@ class EnviroLink_AI_Aggregator {
     }
     
     /**
+     * Check if a feed is due for processing based on its schedule
+     */
+    private function is_feed_due($feed) {
+        // Ensure backward compatibility
+        $schedule_type = isset($feed['schedule_type']) ? $feed['schedule_type'] : 'hourly';
+        $schedule_times = isset($feed['schedule_times']) ? $feed['schedule_times'] : 1;
+        $last_processed = isset($feed['last_processed']) ? $feed['last_processed'] : 0;
+
+        // If never processed, it's due
+        if ($last_processed == 0) {
+            return true;
+        }
+
+        $now = time();
+        $time_since_last = $now - $last_processed;
+
+        // Calculate the interval in seconds
+        switch ($schedule_type) {
+            case 'hourly':
+                $interval = 3600 / $schedule_times;  // seconds per processing
+                break;
+            case 'daily':
+                $interval = 86400 / $schedule_times; // 24 hours in seconds
+                break;
+            case 'weekly':
+                $interval = 604800 / $schedule_times; // 7 days in seconds
+                break;
+            case 'monthly':
+                $interval = 2592000 / $schedule_times; // ~30 days in seconds
+                break;
+            default:
+                $interval = 3600; // default to hourly
+        }
+
+        return $time_since_last >= $interval;
+    }
+
+    /**
      * Main function: Fetch and process feeds
      */
     public function fetch_and_process_feeds() {
@@ -456,16 +622,21 @@ class EnviroLink_AI_Aggregator {
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
         $post_status = get_option('envirolink_post_status', 'publish');
-        
+
         if (empty($api_key)) {
             return array('success' => false, 'message' => 'API key not configured');
         }
-        
+
         $total_processed = 0;
         $total_created = 0;
-        
-        foreach ($feeds as $feed) {
+
+        foreach ($feeds as $index => $feed) {
             if (!$feed['enabled']) {
+                continue;
+            }
+
+            // Check if feed is due for processing
+            if (!$this->is_feed_due($feed)) {
                 continue;
             }
             
@@ -530,11 +701,17 @@ class EnviroLink_AI_Aggregator {
                     update_post_meta($post_id, 'envirolink_source_url', $original_link);
                     update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                     update_post_meta($post_id, 'envirolink_original_title', $original_title);
-                    
+
                     $total_created++;
                 }
             }
+
+            // Update last processed time for this feed
+            $feeds[$index]['last_processed'] = time();
         }
+
+        // Save updated feeds with last_processed times
+        update_option('envirolink_feeds', $feeds);
         
         update_option('envirolink_last_run', current_time('mysql'));
         

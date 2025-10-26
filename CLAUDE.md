@@ -15,7 +15,13 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
 **Key architectural components:**
 
 1. **WordPress Options API** - All configuration stored in wp_options:
-   - `envirolink_feeds`: Array of RSS feed objects (url, name, enabled)
+   - `envirolink_feeds`: Array of RSS feed objects with:
+     - `url`: Feed URL
+     - `name`: Display name
+     - `enabled`: Boolean active status
+     - `schedule_type`: 'hourly', 'daily', 'weekly', or 'monthly'
+     - `schedule_times`: Number of times to process per period (1-24)
+     - `last_processed`: Unix timestamp of last processing
    - `envirolink_api_key`: Anthropic API key (stored as password)
    - `envirolink_post_category`: Default category ID for posts
    - `envirolink_post_status`: 'publish' or 'draft'
@@ -24,6 +30,7 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
 2. **WordPress Cron** - Automated processing:
    - Hook: `envirolink_fetch_feeds`
    - Schedule: Hourly (set during activation)
+   - Processes each feed based on its individual schedule
    - Deactivation clears the scheduled event
 
 3. **Post Metadata** - Duplicate detection and attribution:
@@ -40,21 +47,32 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
 
 1. **Feed Fetching** (`fetch_and_process_feeds` method):
    - Iterates through enabled feeds
+   - Checks if each feed is due for processing via `is_feed_due()` method
+   - Calculates next processing time based on schedule_type and schedule_times
    - Uses WordPress `fetch_feed()` to get RSS items
    - Limits to 10 items per feed
+   - Updates `last_processed` timestamp after processing
 
-2. **Duplicate Detection**:
+2. **Per-Feed Scheduling** (`is_feed_due` method):
+   - Compares current time with last_processed timestamp
+   - Calculates interval: period_in_seconds / schedule_times
+   - Examples:
+     - "2 times per day" = process every 12 hours
+     - "3 times per week" = process every 56 hours
+     - "1 time per month" = process every ~30 days
+
+3. **Duplicate Detection**:
    - Queries existing posts by `envirolink_source_url` meta key
    - Skips if URL already exists
 
-3. **AI Processing** (`rewrite_with_ai` method):
+4. **AI Processing** (`rewrite_with_ai` method):
    - Sends original title + content to Claude API
    - Model: `claude-sonnet-4-20250514`
    - Max tokens: 1024
    - Expects structured response with "TITLE:" and "CONTENT:" markers
    - Parses response using regex
 
-4. **Post Creation**:
+5. **Post Creation**:
    - Creates standard WordPress post
    - Post author hardcoded to user ID 1
    - Respects configured category and status
@@ -114,7 +132,13 @@ The plugin is designed to be uploaded via WordPress admin:
 ## Common Modifications
 
 ### Changing Cron Frequency
-Modify the activation hook to use different WordPress cron schedule (e.g., 'twicedaily', 'daily').
+The global cron runs hourly. Individual feed schedules are managed per-feed via the admin UI. To change the global cron frequency, modify the activation hook to use different WordPress cron schedule (e.g., 'twicedaily', 'daily'). Note: Even with less frequent global cron, feeds will only process when their individual schedules are due.
+
+### Adjusting Per-Feed Schedules
+Each feed has configurable schedule settings accessible via "Edit Schedule" button in the admin:
+- `schedule_type`: hourly, daily, weekly, or monthly
+- `schedule_times`: Number of times to process per period (1-24)
+- Schedule logic in `is_feed_due()` method calculates intervals dynamically
 
 ### Adjusting Articles Per Feed
 Change `get_item_quantity(10)` value in `fetch_and_process_feeds` method.
