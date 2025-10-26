@@ -587,8 +587,8 @@ class EnviroLink_AI_Aggregator {
             wp_send_json_error(array('message' => 'Unauthorized'));
             return;
         }
-        
-        $result = $this->fetch_and_process_feeds();
+
+        $result = $this->fetch_and_process_feeds(true); // Pass true for manual run
         
         if ($result['success']) {
             wp_send_json_success(array('message' => $result['message']));
@@ -637,8 +637,9 @@ class EnviroLink_AI_Aggregator {
 
     /**
      * Main function: Fetch and process feeds
+     * @param bool $manual_run Whether this is a manual run (bypasses schedule checks)
      */
-    public function fetch_and_process_feeds() {
+    public function fetch_and_process_feeds($manual_run = false) {
         $api_key = get_option('envirolink_api_key');
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
@@ -658,8 +659,8 @@ class EnviroLink_AI_Aggregator {
                 continue;
             }
 
-            // Check if feed is due for processing
-            if (!$this->is_feed_due($feed)) {
+            // Check if feed is due for processing (skip check for manual runs)
+            if (!$manual_run && !$this->is_feed_due($feed)) {
                 continue;
             }
             
