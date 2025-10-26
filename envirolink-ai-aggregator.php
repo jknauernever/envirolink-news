@@ -60,7 +60,11 @@ class EnviroLink_AI_Aggregator {
                 'enabled' => true,
                 'schedule_type' => 'hourly',
                 'schedule_times' => 1,
-                'last_processed' => 0
+                'last_processed' => 0,
+                'include_author' => true,
+                'include_pubdate' => true,
+                'include_topic_tags' => true,
+                'include_locations' => true
             )
         );
         
@@ -162,7 +166,11 @@ class EnviroLink_AI_Aggregator {
                 'enabled' => true,
                 'schedule_type' => sanitize_text_field($_POST['schedule_type']),
                 'schedule_times' => absint($_POST['schedule_times']),
-                'last_processed' => 0
+                'last_processed' => 0,
+                'include_author' => isset($_POST['include_author']),
+                'include_pubdate' => isset($_POST['include_pubdate']),
+                'include_topic_tags' => isset($_POST['include_topic_tags']),
+                'include_locations' => isset($_POST['include_locations'])
             );
             update_option('envirolink_feeds', $feeds);
             
@@ -196,7 +204,7 @@ class EnviroLink_AI_Aggregator {
             }
         }
 
-        // Edit feed schedule
+        // Edit feed settings
         if (isset($_POST['envirolink_edit_feed'])) {
             check_admin_referer('envirolink_edit_feed');
 
@@ -205,8 +213,12 @@ class EnviroLink_AI_Aggregator {
             if (isset($feeds[$index])) {
                 $feeds[$index]['schedule_type'] = sanitize_text_field($_POST['schedule_type']);
                 $feeds[$index]['schedule_times'] = absint($_POST['schedule_times']);
+                $feeds[$index]['include_author'] = isset($_POST['include_author']);
+                $feeds[$index]['include_pubdate'] = isset($_POST['include_pubdate']);
+                $feeds[$index]['include_topic_tags'] = isset($_POST['include_topic_tags']);
+                $feeds[$index]['include_locations'] = isset($_POST['include_locations']);
                 update_option('envirolink_feeds', $feeds);
-                echo '<div class="notice notice-success"><p>Feed schedule updated!</p></div>';
+                echo '<div class="notice notice-success"><p>Feed settings updated!</p></div>';
             }
         }
         
@@ -377,6 +389,33 @@ class EnviroLink_AI_Aggregator {
                                 <p class="description">How often to import articles from this feed</p>
                             </td>
                         </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Metadata to Include
+                            </th>
+                            <td>
+                                <fieldset>
+                                    <label>
+                                        <input type="checkbox" name="include_author" value="1" checked />
+                                        Author (dc:creator)
+                                    </label><br/>
+                                    <label>
+                                        <input type="checkbox" name="include_pubdate" value="1" checked />
+                                        Publication Date (pubDate)
+                                    </label><br/>
+                                    <label>
+                                        <input type="checkbox" name="include_topic_tags" value="1" checked />
+                                        Topic Tags
+                                    </label><br/>
+                                    <label>
+                                        <input type="checkbox" name="include_locations" value="1" checked />
+                                        Locations
+                                    </label>
+                                </fieldset>
+                                <p class="description">Select which metadata fields to extract and store from the RSS feed</p>
+                            </td>
+                        </tr>
                     </table>
 
                     <p class="submit">
@@ -409,6 +448,10 @@ class EnviroLink_AI_Aggregator {
                                 $schedule_type = isset($feed['schedule_type']) ? $feed['schedule_type'] : 'hourly';
                                 $schedule_times = isset($feed['schedule_times']) ? $feed['schedule_times'] : 1;
                                 $last_processed = isset($feed['last_processed']) ? $feed['last_processed'] : 0;
+                                $include_author = isset($feed['include_author']) ? $feed['include_author'] : true;
+                                $include_pubdate = isset($feed['include_pubdate']) ? $feed['include_pubdate'] : true;
+                                $include_topic_tags = isset($feed['include_topic_tags']) ? $feed['include_topic_tags'] : true;
+                                $include_locations = isset($feed['include_locations']) ? $feed['include_locations'] : true;
 
                                 $schedule_label = $schedule_type === 'hourly' ? 'hour' :
                                                  ($schedule_type === 'daily' ? 'day' :
@@ -444,8 +487,12 @@ class EnviroLink_AI_Aggregator {
                                         <button type="button" class="button button-small edit-schedule-btn"
                                                 data-index="<?php echo $index; ?>"
                                                 data-schedule-type="<?php echo esc_attr($schedule_type); ?>"
-                                                data-schedule-times="<?php echo esc_attr($schedule_times); ?>">
-                                            Edit Schedule
+                                                data-schedule-times="<?php echo esc_attr($schedule_times); ?>"
+                                                data-include-author="<?php echo $include_author ? '1' : '0'; ?>"
+                                                data-include-pubdate="<?php echo $include_pubdate ? '1' : '0'; ?>"
+                                                data-include-topic-tags="<?php echo $include_topic_tags ? '1' : '0'; ?>"
+                                                data-include-locations="<?php echo $include_locations ? '1' : '0'; ?>">
+                                            Edit Settings
                                         </button>
 
                                         <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&toggle_feed=' . $index), 'envirolink_toggle_feed_' . $index); ?>"
@@ -465,10 +512,10 @@ class EnviroLink_AI_Aggregator {
                     </tbody>
                 </table>
 
-                <!-- Edit Schedule Modal -->
+                <!-- Edit Feed Settings Modal -->
                 <div id="edit-schedule-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999;">
-                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 5px; min-width: 400px;">
-                        <h2>Edit Feed Schedule</h2>
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 5px; min-width: 500px; max-height: 80vh; overflow-y: auto;">
+                        <h2>Edit Feed Settings</h2>
                         <form method="post" action="" id="edit-schedule-form">
                             <?php wp_nonce_field('envirolink_edit_feed'); ?>
                             <input type="hidden" name="feed_index" id="edit-feed-index" value="" />
@@ -490,10 +537,37 @@ class EnviroLink_AI_Aggregator {
                                         </select>
                                     </td>
                                 </tr>
+
+                                <tr>
+                                    <th scope="row">
+                                        Metadata to Include
+                                    </th>
+                                    <td>
+                                        <fieldset>
+                                            <label>
+                                                <input type="checkbox" name="include_author" id="edit-include-author" value="1" />
+                                                Author (dc:creator)
+                                            </label><br/>
+                                            <label>
+                                                <input type="checkbox" name="include_pubdate" id="edit-include-pubdate" value="1" />
+                                                Publication Date (pubDate)
+                                            </label><br/>
+                                            <label>
+                                                <input type="checkbox" name="include_topic_tags" id="edit-include-topic-tags" value="1" />
+                                                Topic Tags
+                                            </label><br/>
+                                            <label>
+                                                <input type="checkbox" name="include_locations" id="edit-include-locations" value="1" />
+                                                Locations
+                                            </label>
+                                        </fieldset>
+                                        <p class="description">Select which metadata fields to extract and store</p>
+                                    </td>
+                                </tr>
                             </table>
 
                             <p>
-                                <input type="submit" name="envirolink_edit_feed" class="button button-primary" value="Save Schedule" />
+                                <input type="submit" name="envirolink_edit_feed" class="button button-primary" value="Save Settings" />
                                 <button type="button" class="button" id="cancel-edit-schedule">Cancel</button>
                             </p>
                         </form>
@@ -542,15 +616,23 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
-            // Edit schedule modal
+            // Edit feed settings modal
             $('.edit-schedule-btn').click(function() {
                 var index = $(this).data('index');
                 var scheduleType = $(this).data('schedule-type');
                 var scheduleTimes = $(this).data('schedule-times');
+                var includeAuthor = $(this).data('include-author') == '1';
+                var includePubdate = $(this).data('include-pubdate') == '1';
+                var includeTopicTags = $(this).data('include-topic-tags') == '1';
+                var includeLocations = $(this).data('include-locations') == '1';
 
                 $('#edit-feed-index').val(index);
                 $('#edit-schedule-type').val(scheduleType);
                 $('#edit-schedule-times').val(scheduleTimes);
+                $('#edit-include-author').prop('checked', includeAuthor);
+                $('#edit-include-pubdate').prop('checked', includePubdate);
+                $('#edit-include-topic-tags').prop('checked', includeTopicTags);
+                $('#edit-include-locations').prop('checked', includeLocations);
 
                 $('#edit-schedule-modal').fadeIn();
             });
@@ -718,6 +800,9 @@ class EnviroLink_AI_Aggregator {
                 // Extract image from feed
                 $image_url = $this->extract_feed_image($item);
 
+                // Extract metadata from feed
+                $feed_metadata = $this->extract_feed_metadata($item, $feed);
+
                 // Create or update WordPress post
                 if ($is_update) {
                     // Update existing post
@@ -734,6 +819,20 @@ class EnviroLink_AI_Aggregator {
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
                         update_post_meta($post_id, 'envirolink_last_updated', current_time('mysql'));
+
+                        // Store feed metadata
+                        if (isset($feed_metadata['author'])) {
+                            update_post_meta($post_id, 'envirolink_author', $feed_metadata['author']);
+                        }
+                        if (isset($feed_metadata['pubdate'])) {
+                            update_post_meta($post_id, 'envirolink_pubdate', $feed_metadata['pubdate']);
+                        }
+                        if (isset($feed_metadata['topic_tags'])) {
+                            update_post_meta($post_id, 'envirolink_topic_tags', $feed_metadata['topic_tags']);
+                        }
+                        if (isset($feed_metadata['locations'])) {
+                            update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
+                        }
 
                         // Update featured image if found
                         if ($image_url) {
@@ -763,6 +862,20 @@ class EnviroLink_AI_Aggregator {
                         update_post_meta($post_id, 'envirolink_source_url', $original_link);
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
+
+                        // Store feed metadata
+                        if (isset($feed_metadata['author'])) {
+                            update_post_meta($post_id, 'envirolink_author', $feed_metadata['author']);
+                        }
+                        if (isset($feed_metadata['pubdate'])) {
+                            update_post_meta($post_id, 'envirolink_pubdate', $feed_metadata['pubdate']);
+                        }
+                        if (isset($feed_metadata['topic_tags'])) {
+                            update_post_meta($post_id, 'envirolink_topic_tags', $feed_metadata['topic_tags']);
+                        }
+                        if (isset($feed_metadata['locations'])) {
+                            update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
+                        }
 
                         // Set featured image if found
                         if ($image_url) {
@@ -831,6 +944,67 @@ class EnviroLink_AI_Aggregator {
         }
 
         return null;
+    }
+
+    /**
+     * Extract metadata from RSS feed item
+     */
+    private function extract_feed_metadata($item, $feed) {
+        $metadata = array();
+
+        // Extract author (dc:creator)
+        if (!empty($feed['include_author'])) {
+            $author_tags = $item->get_item_tags('http://purl.org/dc/elements/1.1/', 'creator');
+            if ($author_tags && isset($author_tags[0]['data'])) {
+                $metadata['author'] = $author_tags[0]['data'];
+            }
+        }
+
+        // Extract publication date (pubDate)
+        if (!empty($feed['include_pubdate'])) {
+            $pubdate = $item->get_date('c'); // Get in ISO 8601 format
+            if ($pubdate) {
+                $metadata['pubdate'] = $pubdate;
+            }
+        }
+
+        // Extract topic tags
+        if (!empty($feed['include_topic_tags'])) {
+            // Try multiple possible tag fields
+            $topic_tags = null;
+
+            // Method 1: Look for custom topic-tags field
+            $tags = $item->get_item_tags('', 'topic-tags');
+            if ($tags && isset($tags[0]['data'])) {
+                $topic_tags = $tags[0]['data'];
+            }
+
+            // Method 2: Try categories
+            if (!$topic_tags) {
+                $categories = $item->get_categories();
+                if ($categories) {
+                    $tag_list = array();
+                    foreach ($categories as $category) {
+                        $tag_list[] = $category->get_label();
+                    }
+                    $topic_tags = implode(', ', $tag_list);
+                }
+            }
+
+            if ($topic_tags) {
+                $metadata['topic_tags'] = $topic_tags;
+            }
+        }
+
+        // Extract locations
+        if (!empty($feed['include_locations'])) {
+            $locations = $item->get_item_tags('', 'locations');
+            if ($locations && isset($locations[0]['data'])) {
+                $metadata['locations'] = $locations[0]['data'];
+            }
+        }
+
+        return $metadata;
     }
 
     /**

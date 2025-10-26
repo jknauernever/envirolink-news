@@ -22,6 +22,10 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
      - `schedule_type`: 'hourly', 'daily', 'weekly', or 'monthly'
      - `schedule_times`: Number of times to process per period (1-24)
      - `last_processed`: Unix timestamp of last processing
+     - `include_author`: Boolean - extract author (dc:creator)
+     - `include_pubdate`: Boolean - extract publication date
+     - `include_topic_tags`: Boolean - extract topic tags
+     - `include_locations`: Boolean - extract locations
    - `envirolink_api_key`: Anthropic API key (stored as password)
    - `envirolink_post_category`: Default category ID for posts
    - `envirolink_post_status`: 'publish' or 'draft'
@@ -34,11 +38,15 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - Processes each feed based on its individual schedule
    - Deactivation clears the scheduled event
 
-3. **Post Metadata** - Duplicate detection and attribution:
+3. **Post Metadata** - Duplicate detection, attribution, and RSS metadata:
    - `envirolink_source_url`: Original article URL (used for duplicate detection)
    - `envirolink_source_name`: Feed name
    - `envirolink_original_title`: Original article title
    - `envirolink_last_updated`: MySQL datetime of last update (only for updated posts)
+   - `envirolink_author`: Original author from RSS feed (dc:creator) - if enabled
+   - `envirolink_pubdate`: Original publication date from RSS - if enabled
+   - `envirolink_topic_tags`: Comma-separated topic tags from RSS - if enabled
+   - `envirolink_locations`: Geographic locations from RSS - if enabled
 
 4. **Admin Interface** - Tab-based UI:
    - System Status dashboard
@@ -76,19 +84,30 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - Downloads image and uploads to WordPress media library
    - Sets as featured image (post thumbnail)
 
-5. **AI Processing** (`rewrite_with_ai` method):
+5. **Metadata Extraction** (`extract_feed_metadata` method):
+   - Per-feed configurable extraction of RSS metadata
+   - Author: Extracts from `dc:creator` namespace
+   - Publication Date: Gets from RSS `pubDate` field
+   - Topic Tags: Tries custom `topic-tags` field first, falls back to categories
+   - Locations: Extracts from custom `locations` field
+   - Gracefully handles missing fields (no errors if field doesn't exist)
+   - Only extracts fields that are enabled in feed configuration
+
+6. **AI Processing** (`rewrite_with_ai` method):
    - Sends original title + content to Claude API
    - Model: `claude-sonnet-4-20250514`
    - Max tokens: 1024
    - Expects structured response with "TITLE:" and "CONTENT:" markers
    - Parses response using regex
 
-6. **Post Creation/Update**:
+7. **Post Creation/Update**:
    - Creates new WordPress post OR updates existing one
    - Post author hardcoded to user ID 1 (new posts only)
    - Respects configured category and status (new posts only)
-   - Stores metadata for tracking
+   - Stores metadata for tracking (source URL, feed name, original title)
+   - Stores extracted RSS metadata (author, pubdate, tags, locations) if enabled
    - Downloads and sets featured image if found in feed
+   - All metadata accessible via `get_post_meta()` for theme display
 
 ## Development Commands
 
@@ -157,6 +176,33 @@ Change `get_item_quantity(10)` value in `fetch_and_process_feeds` method.
 
 ### Modifying AI Prompt
 Edit the prompt string in `rewrite_with_ai` method to adjust tone, length, or format.
+
+### Displaying RSS Metadata in Theme
+RSS metadata is stored as post meta and can be displayed in WordPress themes:
+
+```php
+<?php
+// Get metadata
+$author = get_post_meta(get_the_ID(), 'envirolink_author', true);
+$pubdate = get_post_meta(get_the_ID(), 'envirolink_pubdate', true);
+$tags = get_post_meta(get_the_ID(), 'envirolink_topic_tags', true);
+$locations = get_post_meta(get_the_ID(), 'envirolink_locations', true);
+
+// Display
+if ($author) {
+    echo '<p>Original Author: ' . esc_html($author) . '</p>';
+}
+if ($pubdate) {
+    echo '<p>Published: ' . esc_html(date('F j, Y', strtotime($pubdate))) . '</p>';
+}
+if ($tags) {
+    echo '<p>Topics: ' . esc_html($tags) . '</p>';
+}
+if ($locations) {
+    echo '<p>Locations: ' . esc_html($locations) . '</p>';
+}
+?>
+```
 
 ### Changing Claude Model
 Update the 'model' parameter in the API request body.
