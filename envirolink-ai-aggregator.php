@@ -83,6 +83,10 @@ class EnviroLink_AI_Aggregator {
         if (!get_option('envirolink_last_run')) {
             add_option('envirolink_last_run', '');
         }
+
+        if (!get_option('envirolink_update_existing')) {
+            add_option('envirolink_update_existing', 'no');
+        }
         
         // Schedule cron job (hourly)
         if (!wp_next_scheduled('envirolink_fetch_feeds')) {
@@ -124,6 +128,7 @@ class EnviroLink_AI_Aggregator {
         register_setting('envirolink_settings', 'envirolink_api_key');
         register_setting('envirolink_settings', 'envirolink_post_category');
         register_setting('envirolink_settings', 'envirolink_post_status');
+        register_setting('envirolink_settings', 'envirolink_update_existing');
     }
     
     /**
@@ -137,11 +142,12 @@ class EnviroLink_AI_Aggregator {
         // Save settings
         if (isset($_POST['envirolink_save_settings'])) {
             check_admin_referer('envirolink_settings');
-            
+
             update_option('envirolink_api_key', sanitize_text_field($_POST['api_key']));
             update_option('envirolink_post_category', absint($_POST['post_category']));
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
-            
+            update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
+
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
         
@@ -207,6 +213,7 @@ class EnviroLink_AI_Aggregator {
         $api_key = get_option('envirolink_api_key', '');
         $post_category = get_option('envirolink_post_category', '');
         $post_status = get_option('envirolink_post_status', 'publish');
+        $update_existing = get_option('envirolink_update_existing', 'no');
         $feeds = get_option('envirolink_feeds', array());
         $last_run = get_option('envirolink_last_run', '');
         $next_run = wp_next_scheduled('envirolink_fetch_feeds');
@@ -301,6 +308,20 @@ class EnviroLink_AI_Aggregator {
                                     <option value="draft" <?php selected($post_status, 'draft'); ?>>Draft</option>
                                 </select>
                                 <p class="description">Status for new posts</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Update Existing Posts
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="update_existing" id="update_existing"
+                                           <?php checked($update_existing, 'yes'); ?> />
+                                    Update existing posts instead of skipping duplicates
+                                </label>
+                                <p class="description">When enabled, if an article already exists (same source URL), it will be updated with new AI-rewritten content instead of being skipped</p>
                             </td>
                         </tr>
                     </table>
@@ -622,6 +643,7 @@ class EnviroLink_AI_Aggregator {
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
         $post_status = get_option('envirolink_post_status', 'publish');
+        $update_existing = get_option('envirolink_update_existing', 'no');
 
         if (empty($api_key)) {
             return array('success' => false, 'message' => 'API key not configured');
@@ -629,6 +651,7 @@ class EnviroLink_AI_Aggregator {
 
         $total_processed = 0;
         $total_created = 0;
+        $total_updated = 0;
 
         foreach ($feeds as $index => $feed) {
             if (!$feed['enabled']) {
@@ -661,11 +684,21 @@ class EnviroLink_AI_Aggregator {
                     'meta_value' => $original_link,
                     'posts_per_page' => 1
                 ));
-                
+
+                $is_update = false;
+                $existing_post_id = null;
+
                 if (!empty($existing)) {
-                    continue;
+                    if ($update_existing === 'yes') {
+                        // Update mode: we'll update this post
+                        $is_update = true;
+                        $existing_post_id = $existing[0]->ID;
+                    } else {
+                        // Skip mode: skip this article
+                        continue;
+                    }
                 }
-                
+
                 // Get original content
                 $original_title = $item->get_title();
                 $original_description = $item->get_description();
@@ -681,28 +714,62 @@ class EnviroLink_AI_Aggregator {
                     continue;
                 }
                 
-                // Create WordPress post
-                $post_data = array(
-                    'post_title' => $rewritten['title'],
-                    'post_content' => $rewritten['content'],
-                    'post_status' => $post_status,
-                    'post_type' => 'post',
-                    'post_author' => 1
-                );
-                
-                if ($post_category) {
-                    $post_data['post_category'] = array($post_category);
-                }
-                
-                $post_id = wp_insert_post($post_data);
-                
-                if ($post_id) {
-                    // Store metadata
-                    update_post_meta($post_id, 'envirolink_source_url', $original_link);
-                    update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
-                    update_post_meta($post_id, 'envirolink_original_title', $original_title);
+                // Extract image from feed
+                $image_url = $this->extract_feed_image($item);
 
-                    $total_created++;
+                // Create or update WordPress post
+                if ($is_update) {
+                    // Update existing post
+                    $post_data = array(
+                        'ID' => $existing_post_id,
+                        'post_title' => $rewritten['title'],
+                        'post_content' => $rewritten['content']
+                    );
+
+                    $post_id = wp_update_post($post_data);
+
+                    if ($post_id) {
+                        // Update metadata
+                        update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
+                        update_post_meta($post_id, 'envirolink_original_title', $original_title);
+                        update_post_meta($post_id, 'envirolink_last_updated', current_time('mysql'));
+
+                        // Update featured image if found
+                        if ($image_url) {
+                            $this->set_featured_image_from_url($image_url, $post_id);
+                        }
+
+                        $total_updated++;
+                    }
+                } else {
+                    // Create new post
+                    $post_data = array(
+                        'post_title' => $rewritten['title'],
+                        'post_content' => $rewritten['content'],
+                        'post_status' => $post_status,
+                        'post_type' => 'post',
+                        'post_author' => 1
+                    );
+
+                    if ($post_category) {
+                        $post_data['post_category'] = array($post_category);
+                    }
+
+                    $post_id = wp_insert_post($post_data);
+
+                    if ($post_id) {
+                        // Store metadata
+                        update_post_meta($post_id, 'envirolink_source_url', $original_link);
+                        update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
+                        update_post_meta($post_id, 'envirolink_original_title', $original_title);
+
+                        // Set featured image if found
+                        if ($image_url) {
+                            $this->set_featured_image_from_url($image_url, $post_id);
+                        }
+
+                        $total_created++;
+                    }
                 }
             }
 
@@ -714,13 +781,94 @@ class EnviroLink_AI_Aggregator {
         update_option('envirolink_feeds', $feeds);
         
         update_option('envirolink_last_run', current_time('mysql'));
-        
+
+        $message = "Processed {$total_processed} articles";
+        if ($total_created > 0) {
+            $message .= ", created {$total_created} new posts";
+        }
+        if ($total_updated > 0) {
+            $message .= ", updated {$total_updated} existing posts";
+        }
+
         return array(
             'success' => true,
-            'message' => "Processed {$total_processed} articles, created {$total_created} new posts"
+            'message' => $message
         );
     }
     
+    /**
+     * Extract and download image from RSS feed item
+     */
+    private function extract_feed_image($item) {
+        // Try to get enclosure (common in RSS feeds for featured images)
+        $enclosure = $item->get_enclosure();
+        if ($enclosure && $enclosure->get_thumbnail()) {
+            return $enclosure->get_thumbnail();
+        }
+        if ($enclosure && $enclosure->get_link()) {
+            $link = $enclosure->get_link();
+            // Check if it's an image
+            if (preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $link)) {
+                return $link;
+            }
+        }
+
+        // Try to extract first image from content
+        $content = $item->get_content();
+        if ($content) {
+            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
+                return $matches[1];
+            }
+        }
+
+        // Try description
+        $description = $item->get_description();
+        if ($description) {
+            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $description, $matches)) {
+                return $matches[1];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Download image and set as featured image for post
+     */
+    private function set_featured_image_from_url($image_url, $post_id) {
+        if (empty($image_url)) {
+            return false;
+        }
+
+        // Download image
+        $tmp = download_url($image_url);
+
+        if (is_wp_error($tmp)) {
+            return false;
+        }
+
+        // Get file info
+        $file_array = array(
+            'name' => basename($image_url),
+            'tmp_name' => $tmp
+        );
+
+        // Upload to media library
+        $attachment_id = media_handle_sideload($file_array, $post_id);
+
+        // Cleanup temp file
+        @unlink($tmp);
+
+        if (is_wp_error($attachment_id)) {
+            return false;
+        }
+
+        // Set as featured image
+        set_post_thumbnail($post_id, $attachment_id);
+
+        return true;
+    }
+
     /**
      * Rewrite content using Anthropic API
      */

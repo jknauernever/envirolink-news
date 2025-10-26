@@ -25,6 +25,7 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - `envirolink_api_key`: Anthropic API key (stored as password)
    - `envirolink_post_category`: Default category ID for posts
    - `envirolink_post_status`: 'publish' or 'draft'
+   - `envirolink_update_existing`: 'yes' or 'no' - update existing posts vs skip
    - `envirolink_last_run`: MySQL datetime of last execution
 
 2. **WordPress Cron** - Automated processing:
@@ -37,6 +38,7 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - `envirolink_source_url`: Original article URL (used for duplicate detection)
    - `envirolink_source_name`: Feed name
    - `envirolink_original_title`: Original article title
+   - `envirolink_last_updated`: MySQL datetime of last update (only for updated posts)
 
 4. **Admin Interface** - Tab-based UI:
    - System Status dashboard
@@ -61,22 +63,32 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
      - "3 times per week" = process every 56 hours
      - "1 time per month" = process every ~30 days
 
-3. **Duplicate Detection**:
+3. **Duplicate Detection & Update Logic**:
    - Queries existing posts by `envirolink_source_url` meta key
-   - Skips if URL already exists
+   - If duplicate found:
+     - With `update_existing=no`: Skips the article
+     - With `update_existing=yes`: Updates the existing post with new AI content
+   - Tracks separately: created vs updated post counts
 
-4. **AI Processing** (`rewrite_with_ai` method):
+4. **Image Extraction** (`extract_feed_image` method):
+   - Attempts to extract featured image from RSS feed item
+   - Checks in order: enclosure thumbnail, enclosure link, content images, description images
+   - Downloads image and uploads to WordPress media library
+   - Sets as featured image (post thumbnail)
+
+5. **AI Processing** (`rewrite_with_ai` method):
    - Sends original title + content to Claude API
    - Model: `claude-sonnet-4-20250514`
    - Max tokens: 1024
    - Expects structured response with "TITLE:" and "CONTENT:" markers
    - Parses response using regex
 
-5. **Post Creation**:
-   - Creates standard WordPress post
-   - Post author hardcoded to user ID 1
-   - Respects configured category and status
+6. **Post Creation/Update**:
+   - Creates new WordPress post OR updates existing one
+   - Post author hardcoded to user ID 1 (new posts only)
+   - Respects configured category and status (new posts only)
    - Stores metadata for tracking
+   - Downloads and sets featured image if found in feed
 
 ## Development Commands
 
