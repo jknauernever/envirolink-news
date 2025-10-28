@@ -834,6 +834,12 @@ class EnviroLink_AI_Aggregator {
                             update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
                         }
 
+                        // Convert topic tags to WordPress tags
+                        if (isset($feed_metadata['topic_tags'])) {
+                            $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
+                            wp_set_post_tags($post_id, $tag_array, false);
+                        }
+
                         // Update featured image if found
                         if ($image_url) {
                             $this->set_featured_image_from_url($image_url, $post_id);
@@ -875,6 +881,12 @@ class EnviroLink_AI_Aggregator {
                         }
                         if (isset($feed_metadata['locations'])) {
                             update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
+                        }
+
+                        // Convert topic tags to WordPress tags
+                        if (isset($feed_metadata['topic_tags'])) {
+                            $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
+                            wp_set_post_tags($post_id, $tag_array, false);
                         }
 
                         // Set featured image if found
