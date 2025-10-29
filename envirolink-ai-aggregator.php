@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.7.0
+ * Version: 1.8.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.7.0');
+define('ENVIROLINK_VERSION', '1.8.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -49,6 +49,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
         add_action('wp_ajax_envirolink_get_progress', array($this, 'ajax_get_progress'));
         add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
+        add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
     }
     
     /**
@@ -318,6 +319,13 @@ class EnviroLink_AI_Aggregator {
                                                 data-include-locations="<?php echo (isset($feed['include_locations']) && $feed['include_locations']) ? '1' : '0'; ?>"
                                                 title="Edit feed settings">
                                             <span class="dashicons dashicons-edit" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                        </button>
+                                        <button type="button" class="button button-small update-images-btn"
+                                                data-index="<?php echo $index; ?>"
+                                                data-name="<?php echo esc_attr($feed['name']); ?>"
+                                                title="Re-download all images for this feed (high-res)"
+                                                style="background-color: #9b59b6; color: white; border-color: #8e44ad;">
+                                            <span class="dashicons dashicons-format-image" style="font-size: 16px; width: 16px; height: 16px;"></span>
                                         </button>
                                         <button type="button" class="button button-small button-primary run-feed-btn"
                                                 data-index="<?php echo $index; ?>"
@@ -804,6 +812,56 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
+            // Update images button
+            $('.update-images-btn').click(function() {
+                var btn = $(this);
+                var feedIndex = btn.data('index');
+                var feedName = btn.data('name');
+                var icon = btn.find('.dashicons');
+
+                if (!confirm('This will re-download all images for "' + feedName + '" posts using high-resolution settings.\n\nThis will NOT run AI or change any content - only update images.\n\nContinue?')) {
+                    return;
+                }
+
+                btn.prop('disabled', true);
+                icon.addClass('dashicons-update-spin');
+                $('#run-now-status').html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'envirolink_update_feed_images',
+                        feed_index: feedIndex
+                    },
+                    success: function(response) {
+                        stopProgressPolling();
+                        icon.removeClass('dashicons-update-spin');
+                        if (response.success) {
+                            // Show success feedback
+                            btn.css('background-color', '#27ae60');
+                            setTimeout(function() {
+                                btn.css('background-color', '#9b59b6');
+                                btn.prop('disabled', false);
+                            }, 2000);
+
+                            // Update the main status display
+                            $('#run-now-status').html('<span style="color: green;">✓ ' + feedName + ' images: ' + response.data.message + '</span>');
+                        } else {
+                            btn.prop('disabled', false);
+                            $('#run-now-status').html('<span style="color: red;">✗ ' + feedName + ' images: ' + response.data.message + '</span>');
+                        }
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        icon.removeClass('dashicons-update-spin');
+                        btn.prop('disabled', false);
+                        $('#run-now-status').html('<span style="color: red;">✗ Error updating images for ' + feedName + '</span>');
+                    }
+                });
+            });
+
             // Edit feed settings modal
             $('.edit-schedule-btn').click(function() {
                 var index = $(this).data('index');
@@ -933,6 +991,37 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * AJAX: Update all images for a specific feed
+     */
+    public function ajax_update_feed_images() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $feed_index = isset($_POST['feed_index']) ? intval($_POST['feed_index']) : -1;
+
+        if ($feed_index < 0) {
+            wp_send_json_error(array('message' => 'Invalid feed index'));
+            return;
+        }
+
+        try {
+            $result = $this->update_feed_images($feed_index);
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
      * AJAX: Get current progress
      */
     public function ajax_get_progress() {
@@ -1044,6 +1133,98 @@ class EnviroLink_AI_Aggregator {
         }
 
         return $time_since_last >= $interval;
+    }
+
+    /**
+     * Update images for all existing posts from a specific feed
+     * @param int $feed_index The feed index to update
+     */
+    private function update_feed_images($feed_index) {
+        $feeds = get_option('envirolink_feeds', array());
+
+        if (!isset($feeds[$feed_index])) {
+            return array('success' => false, 'message' => 'Feed not found');
+        }
+
+        $feed = $feeds[$feed_index];
+        $this->log_message('Starting image update for ' . $feed['name']);
+
+        // Query all posts from this feed
+        $args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_query' => array(
+                array(
+                    'key' => 'envirolink_source_name',
+                    'value' => $feed['name'],
+                    'compare' => '='
+                )
+            )
+        );
+
+        $posts = get_posts($args);
+        $total_posts = count($posts);
+
+        if ($total_posts == 0) {
+            $this->log_message('No posts found for this feed');
+            return array('success' => true, 'message' => 'No posts found for this feed');
+        }
+
+        $this->log_message('Found ' . $total_posts . ' posts to update');
+
+        $updated_count = 0;
+        $skipped_count = 0;
+        $failed_count = 0;
+
+        foreach ($posts as $index => $post) {
+            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $index + 1,
+                'total' => $total_posts,
+                'status' => 'Updating images for ' . $feed['name'] . '...'
+            ));
+
+            $this->log_message('Processing: ' . $post->post_title);
+
+            // Get source URL
+            $source_url = get_post_meta($post->ID, 'envirolink_source_url', true);
+            if (empty($source_url)) {
+                $this->log_message('  → Skipped: No source URL found');
+                $skipped_count++;
+                continue;
+            }
+
+            // Try to extract image from article page
+            $this->log_message('  → Fetching from: ' . $source_url);
+            $image_url = $this->extract_image_from_url($source_url);
+
+            if ($image_url) {
+                // Set/update the featured image
+                $success = $this->set_featured_image_from_url($image_url, $post->ID);
+                if ($success) {
+                    $this->log_message('  → ✓ Image updated successfully');
+                    $updated_count++;
+                } else {
+                    $this->log_message('  → ✗ Failed to set featured image');
+                    $failed_count++;
+                }
+            } else {
+                $this->log_message('  → No image found');
+                $failed_count++;
+            }
+        }
+
+        $message = "Updated $updated_count images";
+        if ($skipped_count > 0) $message .= ", skipped $skipped_count";
+        if ($failed_count > 0) $message .= ", failed $failed_count";
+
+        $this->log_message('Complete: ' . $message);
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
     }
 
     /**
