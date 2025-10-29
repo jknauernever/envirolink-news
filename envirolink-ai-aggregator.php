@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.9.2
+ * Version: 1.9.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.9.2');
+define('ENVIROLINK_VERSION', '1.9.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1202,13 +1202,16 @@ class EnviroLink_AI_Aggregator {
                 $current_image_url = wp_get_attachment_url($current_thumbnail_id);
                 if ($current_image_url) {
                     // Check if this is a WordPress-hosted image (already uploaded)
-                    $site_url = get_site_url();
-                    if (strpos($current_image_url, $site_url) !== false) {
-                        $this->log_message('  → Existing image is WordPress-hosted, will fetch from original source');
+                    // Compare hosts (protocol-agnostic) to handle http/https differences
+                    $site_host = parse_url(get_site_url(), PHP_URL_HOST);
+                    $image_host = parse_url($current_image_url, PHP_URL_HOST);
+
+                    if ($site_host === $image_host) {
+                        $this->log_message('  → Existing image is WordPress-hosted (' . $image_host . '), will fetch from original source');
                         // Don't use this URL - go to Strategy 2 to get original from RSS
                     } else {
                         // It's an external URL (CDN), we can try to enhance it
-                        $this->log_message('  → Found existing CDN image, enhancing quality...');
+                        $this->log_message('  → Found existing CDN image (' . $image_host . '), enhancing quality...');
                         $image_url = $this->enhance_image_quality($current_image_url);
                     }
                 }

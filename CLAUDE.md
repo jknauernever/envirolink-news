@@ -109,6 +109,19 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - Downloads and sets featured image if found in feed
    - All metadata accessible via `get_post_meta()` for theme display
 
+## Project Structure
+
+```
+envirolink-news/
+├── envirolink-ai-aggregator.php    # Main plugin file (monolithic architecture)
+├── blocksy-child-functions.php     # Theme functions for metadata display
+├── create-plugin.sh                # Build script for plugin ZIP
+├── README.md                       # User-facing documentation
+├── CLAUDE.md                       # This file - developer guidance
+├── DEPLOYMENT.md                   # GitHub Actions deployment setup
+└── INSTALLATION-GUIDE.md           # Theme integration guide
+```
+
 ## Development Commands
 
 ### Create Plugin ZIP for WordPress Upload
@@ -116,12 +129,19 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
 zip -r ../envirolink-ai-aggregator.zip . -x "*.git*" "*.sh" "*.zip"
 ```
 
-### Version Control Setup
+Or use the provided script:
 ```bash
-git init
-git add .
-git commit -m "Initial commit: EnviroLink AI News Aggregator v1.0"
+./create-plugin.sh
 ```
+
+### Testing Locally
+The plugin has no automated tests. Manual testing workflow:
+1. Make code changes to `envirolink-ai-aggregator.php`
+2. Use Git to commit changes
+3. GitHub Actions auto-deploys to production (if configured)
+4. Test via WordPress admin: EnviroLink News → "Run Aggregator Now"
+5. Check WordPress Posts for new entries
+6. Review logs in admin panel (toggle "Show Detailed Log")
 
 ## Plugin Installation in WordPress
 
@@ -205,7 +225,68 @@ if ($locations) {
 ```
 
 ### Changing Claude Model
-Update the 'model' parameter in the API request body.
+Update the 'model' parameter in the API request body in `rewrite_with_ai` method (line ~2100).
+
+## Recent Version History
+
+**v1.9.2** (2025-10-29) - CRITICAL FIX: Stop re-downloading WordPress thumbnails
+- Fixed bug where image updater would skip WordPress-hosted images
+- Now properly fetches original images from RSS/article source
+
+**v1.9.1** - Fix log overwrite bug
+- Purple button log now persists properly after completion
+
+**v1.9.0** - Fix blurry Guardian images
+- Enhanced image quality detection and URL parameter upgrading
+- Detects and upgrades low-res thumbnails to high-res versions
+
+**v1.8.4** - Fix Guardian signature validation
+- Preserve authenticated URLs with signatures
+- Only modify unsigned URLs to avoid breaking CDN authentication
+
+**v1.8.3** - Add detailed logging to image download/upload process
+
+## Image Processing Architecture
+
+The plugin implements sophisticated image extraction with multiple fallback strategies:
+
+### Image Sources (Priority Order)
+1. **RSS Media Tags**: `media:content`, `media:thumbnail` (Yahoo Media RSS namespace)
+2. **Enclosures**: RSS enclosure thumbnail/link
+3. **Content Parsing**: Extract `<img>` tags from RSS content/description
+4. **Web Scraping**: Fetch article page and extract Open Graph/Twitter Card images
+
+### Quality Enhancement
+- **Guardian Images**: Detects Guardian CDN URLs (`i.guim.co.uk`) and upgrades quality parameters
+  - Checks for signed URLs (preserve authentication)
+  - Extracts master image dimensions from path
+  - Upgrades to high-res (1920px, quality=85) when safe
+- **Generic URLs**: Attempts to upgrade width/quality parameters
+- See `enhance_image_quality()` method (line ~1836)
+
+### Update Images Feature (Purple Button)
+- Re-downloads all images for a specific feed's posts
+- Does NOT run AI or change content
+- Three strategies:
+  1. Enhance existing CDN URLs
+  2. Fetch from RSS feed (most reliable)
+  3. Scrape article page
+- See `update_feed_images()` method (line ~1140) and `ajax_update_feed_images()` (line ~994)
+
+## Progress Tracking & Logging
+
+### Real-time Progress Display
+- JavaScript polls `envirolink_get_progress` AJAX endpoint every 500ms
+- Shows progress bar, percentage, current/total articles
+- Displays detailed log messages with timestamps
+- See JavaScript in admin page (lines ~654-912)
+
+### Logging System
+- `log_message()`: Adds timestamped entries to progress transient
+- `update_progress()`: Updates progress bar state
+- `clear_progress()`: Saves log to wp_options for persistence
+- Logs preserved after completion for review (purple button log fix in v1.9.1)
+- Transient expires after 5 minutes (300 seconds)
 
 ## Testing the Plugin
 
@@ -215,6 +296,44 @@ Update the 'model' parameter in the API request body.
 - View "Last Run" timestamp in System Status
 - Check WordPress Posts for new entries
 - Verify post metadata exists
+
+## Theme Integration (Blocksy Child Theme)
+
+The `blocksy-child-functions.php` file contains WordPress hooks for displaying metadata in the Blocksy theme. This is separate from the plugin and must be manually added to the child theme's functions.php.
+
+### Metadata Display Locations
+1. **Listing Pages** (homepage, archives): Compact format showing source, author, date, first tag
+   - Hook: `blocksy:loop:card:end` or `blocksy:posts-loop:after:excerpt`
+2. **Single Posts**: Full attribution box with all metadata and "Read Original" link
+   - Hook: `blocksy:single:content:bottom`
+
+### Available Post Metadata Fields
+- `envirolink_source_url`: Original article URL
+- `envirolink_source_name`: Feed name
+- `envirolink_original_title`: Original article title
+- `envirolink_last_updated`: MySQL datetime (for updated posts)
+- `envirolink_author`: Original author from RSS
+- `envirolink_pubdate`: Original publication date
+- `envirolink_topic_tags`: Comma-separated tags (also converted to WP tags)
+- `envirolink_locations`: Geographic locations
+- `envirolink_content_hash`: MD5 hash for change detection
+
+### Styling
+CSS for metadata display should be added via Appearance → Customize → Additional CSS. See `INSTALLATION-GUIDE.md` for details.
+
+## Deployment
+
+### GitHub Actions Auto-Deployment
+- Repository has GitHub Actions workflow for SFTP deployment
+- On push to `main` branch, uploads plugin files to WordPress server
+- Requires secrets: `SFTP_HOST`, `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PORT`, `SFTP_PATH`
+- See `DEPLOYMENT.md` for setup instructions
+- Excludes: Git files, shell scripts, ZIP files
+
+### Manual Deployment
+1. Create ZIP: `zip -r envirolink-ai-aggregator.zip . -x "*.git*" "*.sh" "*.zip"`
+2. Upload via WordPress admin: Plugins → Add New → Upload Plugin
+3. Or SFTP directly to `/wp-content/plugins/envirolink-ai-aggregator/`
 
 ## Potential Issues
 
@@ -226,3 +345,21 @@ The `rewrite_with_ai` method uses regex to parse "TITLE:" and "CONTENT:" from Cl
 
 ### Post Author ID
 Posts are created with author ID 1 (hardcoded). This assumes user 1 exists in the WordPress installation.
+
+### Image Download Failures
+- Guardian images with signatures must preserve query parameters
+- WordPress media library requires valid file extensions
+- Image URLs are parsed to remove query strings for clean filenames (line ~2029)
+- Failed downloads are logged but don't block post creation
+
+### Memory/Performance
+- Processing 50+ articles per feed can hit PHP memory limits
+- Each AI rewrite makes an API call (no batching)
+- Image downloads are synchronous
+- Consider reducing `get_item_quantity(10)` if timeout issues occur
+
+### Duplicate Detection Edge Cases
+- Relies on exact URL match via `envirolink_source_url` meta
+- URL changes (http→https, trailing slash) may create duplicates
+- Hash-based change detection requires `envirolink_content_hash` field
+- "Update existing" mode compares content hash to avoid unnecessary AI calls
