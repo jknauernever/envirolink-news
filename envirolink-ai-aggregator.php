@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.0
+ * Version: 1.11.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.0');
+define('ENVIROLINK_VERSION', '1.11.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -127,15 +127,47 @@ class EnviroLink_AI_Aggregator {
     public function randomize_daily_order($orderby, $query) {
         global $wpdb;
 
-        // Only affect main query on frontend (not admin, not RSS feeds, not sitemaps)
-        if (is_admin() || !$query->is_main_query() || is_feed() || is_robots() || is_sitemap()) {
+        // Safety checks - return original order if anything is wrong
+        if (!$query || !$wpdb || !isset($wpdb->posts)) {
             return $orderby;
         }
 
-        // Only for post queries (not pages, attachments, etc)
-        if (!isset($query->query_vars['post_type']) || $query->query_vars['post_type'] !== 'post') {
-            // Check if it's the default post query (no explicit post_type set)
-            if (isset($query->query_vars['post_type']) && $query->query_vars['post_type'] !== '') {
+        // Only affect main query
+        if (!$query->is_main_query()) {
+            return $orderby;
+        }
+
+        // Don't affect admin area
+        if (is_admin()) {
+            return $orderby;
+        }
+
+        // Don't affect feeds
+        if (is_feed()) {
+            return $orderby;
+        }
+
+        // Don't affect robots.txt
+        if (function_exists('is_robots') && is_robots()) {
+            return $orderby;
+        }
+
+        // Don't affect sitemaps (WP 5.5+)
+        if (function_exists('is_sitemap') && is_sitemap()) {
+            return $orderby;
+        }
+
+        // Only apply to standard blog queries (home, archive, category, tag, author, date)
+        // Don't apply to: pages, single posts, search, 404, attachments, custom post types
+        if (!is_home() && !is_archive() && !is_category() && !is_tag() && !is_author() && !is_date()) {
+            return $orderby;
+        }
+
+        // Extra safety: Check post_type if it's explicitly set
+        if (isset($query->query_vars['post_type'])) {
+            $post_type = $query->query_vars['post_type'];
+            // If post_type is set and it's not 'post' (or empty array), don't randomize
+            if ($post_type !== 'post' && $post_type !== '' && $post_type !== array() && $post_type !== array('post')) {
                 return $orderby;
             }
         }
