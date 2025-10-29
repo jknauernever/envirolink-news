@@ -1054,15 +1054,20 @@ class EnviroLink_AI_Aggregator {
     
     /**
      * Generate a random datetime within today (00:00:00 to 23:59:59)
+     * Uses WordPress timezone settings
      */
     private function get_random_time_today() {
-        $today_start = strtotime('today 00:00:00');
-        $today_end = strtotime('today 23:59:59');
+        // Get current date in WordPress timezone
+        $today = current_time('Y-m-d');
+
+        // Create timestamps for start and end of today
+        $today_start = strtotime($today . ' 00:00:00');
+        $today_end = strtotime($today . ' 23:59:59');
 
         // Generate random timestamp within today
         $random_timestamp = rand($today_start, $today_end);
 
-        // Format as MySQL datetime
+        // Format as MySQL datetime in local timezone
         return date('Y-m-d H:i:s', $random_timestamp);
     }
 
