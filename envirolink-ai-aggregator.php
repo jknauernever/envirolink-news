@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.8.1
+ * Version: 1.8.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.8.1');
+define('ENVIROLINK_VERSION', '1.8.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -283,14 +283,14 @@ class EnviroLink_AI_Aggregator {
                         <div id="envirolink-progress-detail" style="margin-top: 5px; font-size: 12px; color: #666;">
                             <span id="envirolink-progress-current">0</span> of <span id="envirolink-progress-total">0</span> articles
                         </div>
+                    </div>
 
-                        <!-- Log Viewer -->
-                        <div style="margin-top: 10px;">
-                            <button type="button" class="button button-small" id="toggle-log-btn">Show Detailed Log</button>
-                        </div>
-                        <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 11px; line-height: 1.5;">
-                            <div id="envirolink-log-content"></div>
-                        </div>
+                    <!-- Log Viewer (always visible) -->
+                    <div style="margin-top: 15px;">
+                        <button type="button" class="button button-small" id="toggle-log-btn">Show Detailed Log</button>
+                    </div>
+                    <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 11px; line-height: 1.5;">
+                        <div id="envirolink-log-content"></div>
                     </div>
                 </div>
 
