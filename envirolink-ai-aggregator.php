@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.10.2
+ * Version: 1.11.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.10.2');
+define('ENVIROLINK_VERSION', '1.11.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -51,6 +51,11 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
         add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
         add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
+
+        // Post ordering - randomize within same day
+        if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
+            add_filter('posts_orderby', array($this, 'randomize_daily_order'), 10, 2);
+        }
     }
     
     /**
@@ -113,7 +118,34 @@ class EnviroLink_AI_Aggregator {
             wp_unschedule_event($timestamp, 'envirolink_fetch_feeds');
         }
     }
-    
+
+    /**
+     * Randomize post order within the same day
+     * Orders posts by date (newest first), then randomly within each day
+     * This prevents clustering of posts by source
+     */
+    public function randomize_daily_order($orderby, $query) {
+        global $wpdb;
+
+        // Only affect main query on frontend (not admin, not RSS feeds, not sitemaps)
+        if (is_admin() || !$query->is_main_query() || is_feed() || is_robots() || is_sitemap()) {
+            return $orderby;
+        }
+
+        // Only for post queries (not pages, attachments, etc)
+        if (!isset($query->query_vars['post_type']) || $query->query_vars['post_type'] !== 'post') {
+            // Check if it's the default post query (no explicit post_type set)
+            if (isset($query->query_vars['post_type']) && $query->query_vars['post_type'] !== '') {
+                return $orderby;
+            }
+        }
+
+        // Order by date DESC (newest first), then RAND() within same day
+        // DATE() extracts just the date portion, ignoring time
+        // This groups all posts from the same day together, then randomizes within each group
+        return "DATE({$wpdb->posts}.post_date) DESC, RAND()";
+    }
+
     /**
      * Add admin menu
      */
@@ -138,6 +170,7 @@ class EnviroLink_AI_Aggregator {
         register_setting('envirolink_settings', 'envirolink_post_category');
         register_setting('envirolink_settings', 'envirolink_post_status');
         register_setting('envirolink_settings', 'envirolink_update_existing');
+        register_setting('envirolink_settings', 'envirolink_randomize_daily_order');
     }
     
     /**
@@ -156,6 +189,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_post_category', absint($_POST['post_category']));
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
+            update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
 
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
@@ -413,10 +447,24 @@ class EnviroLink_AI_Aggregator {
                                 <p class="description">When enabled, if an article already exists (same source URL), it will be updated with new AI-rewritten content instead of being skipped</p>
                             </td>
                         </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Randomize Daily Order
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="randomize_daily_order" id="randomize_daily_order"
+                                           <?php checked(get_option('envirolink_randomize_daily_order', 'no'), 'yes'); ?> />
+                                    Randomize order of posts within the same day
+                                </label>
+                                <p class="description">When enabled, posts from the same day will appear in random order instead of being clustered by source. Prevents all Guardian posts appearing together, then all Mongabay posts, etc. Does not modify timestamps.</p>
+                            </td>
+                        </tr>
                     </table>
-                    
+
                     <p class="submit">
-                        <input type="submit" name="envirolink_save_settings" 
+                        <input type="submit" name="envirolink_save_settings"
                                class="button button-primary" value="Save Settings" />
                     </p>
                 </form>
