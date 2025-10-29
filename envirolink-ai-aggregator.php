@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.5.0
+ * Version: 1.5.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.5.0');
+define('ENVIROLINK_VERSION', '1.5.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1337,50 +1337,135 @@ class EnviroLink_AI_Aggregator {
 
     /**
      * Extract and download image from RSS feed item
+     * Tries multiple strategies to find images from different RSS formats
      */
     private function extract_feed_image($item) {
-        // Try to get enclosure (common in RSS feeds for featured images)
-        $enclosure = $item->get_enclosure();
-        if ($enclosure && $enclosure->get_thumbnail()) {
-            return $enclosure->get_thumbnail();
-        }
-        if ($enclosure && $enclosure->get_link()) {
-            $link = $enclosure->get_link();
-            // Check if it's an image
-            if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $link)) {
-                return $link;
+        $strategies = array();
+
+        // Strategy 1: Media RSS namespace (media:content, media:thumbnail)
+        $media_content = $item->get_item_tags('http://search.yahoo.com/mrss/', 'content');
+        if ($media_content && isset($media_content[0]['attribs']['']['url'])) {
+            $url = $media_content[0]['attribs']['']['url'];
+            if ($this->is_valid_image_url($url)) {
+                $strategies[] = 'media:content';
+                $this->log_message('  → Found image via media:content');
+                return $url;
             }
         }
 
-        // Try to extract first image from content
+        $media_thumbnail = $item->get_item_tags('http://search.yahoo.com/mrss/', 'thumbnail');
+        if ($media_thumbnail && isset($media_thumbnail[0]['attribs']['']['url'])) {
+            $url = $media_thumbnail[0]['attribs']['']['url'];
+            if ($this->is_valid_image_url($url)) {
+                $strategies[] = 'media:thumbnail';
+                $this->log_message('  → Found image via media:thumbnail');
+                return $url;
+            }
+        }
+
+        // Strategy 2: Enclosure (Mongabay style)
+        $enclosure = $item->get_enclosure();
+        if ($enclosure && $enclosure->get_thumbnail()) {
+            $url = $enclosure->get_thumbnail();
+            if ($this->is_valid_image_url($url)) {
+                $strategies[] = 'enclosure thumbnail';
+                $this->log_message('  → Found image via enclosure thumbnail');
+                return $url;
+            }
+        }
+        if ($enclosure && $enclosure->get_link()) {
+            $url = $enclosure->get_link();
+            if ($this->is_valid_image_url($url)) {
+                $strategies[] = 'enclosure link';
+                $this->log_message('  → Found image via enclosure link');
+                return $url;
+            }
+        }
+
+        // Strategy 3: Parse content for <img> tags with various attributes
         $content = $item->get_content();
         if ($content) {
-            // Decode HTML entities (SimplePie may have already done this, but ensure it's decoded)
             $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5);
 
-            // Extract src from img tag - match until closing quote
+            // Try standard src
             if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
-                $image_url = $matches[1];
-                // Verify it's a valid image URL
-                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url)) {
-                    return $image_url;
+                if ($this->is_valid_image_url($matches[1])) {
+                    $strategies[] = 'content img src';
+                    $this->log_message('  → Found image in content via img src');
+                    return $matches[1];
+                }
+            }
+
+            // Try data-src (lazy loading)
+            if (preg_match('/<img[^>]+data-src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
+                if ($this->is_valid_image_url($matches[1])) {
+                    $strategies[] = 'content img data-src';
+                    $this->log_message('  → Found image in content via data-src');
+                    return $matches[1];
+                }
+            }
+
+            // Try srcset (get first URL from srcset)
+            if (preg_match('/<img[^>]+srcset=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
+                $srcset = $matches[1];
+                // Extract first URL from srcset (format: "url 1x, url 2x")
+                if (preg_match('/([^\s,]+)/', $srcset, $url_match)) {
+                    if ($this->is_valid_image_url($url_match[1])) {
+                        $strategies[] = 'content img srcset';
+                        $this->log_message('  → Found image in content via srcset');
+                        return $url_match[1];
+                    }
                 }
             }
         }
 
-        // Try description
+        // Strategy 4: Parse description for images
         $description = $item->get_description();
         if ($description) {
             $description = html_entity_decode($description, ENT_QUOTES | ENT_HTML5);
+
             if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $description, $matches)) {
-                $image_url = $matches[1];
-                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url)) {
-                    return $image_url;
+                if ($this->is_valid_image_url($matches[1])) {
+                    $strategies[] = 'description img src';
+                    $this->log_message('  → Found image in description');
+                    return $matches[1];
                 }
             }
         }
 
+        $this->log_message('  → No image found (tried: enclosure, media tags, content, description)');
         return null;
+    }
+
+    /**
+     * Validate if a URL is a valid image URL
+     */
+    private function is_valid_image_url($url) {
+        if (empty($url)) {
+            return false;
+        }
+
+        // Check if it's a valid URL
+        if (!filter_var($url, FILTER_VALIDATE_URL) && !preg_match('/^\/\//', $url)) {
+            return false;
+        }
+
+        // Convert protocol-relative URLs
+        if (preg_match('/^\/\//', $url)) {
+            $url = 'https:' . $url;
+        }
+
+        // Check if it has an image extension or is from a known image service
+        if (preg_match('/\.(jpg|jpeg|png|gif|webp|svg)($|\?)/i', $url)) {
+            return true;
+        }
+
+        // Check for known image hosting patterns
+        if (preg_match('/(images|img|media|uploads|wp-content|cdn)/i', $url)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
