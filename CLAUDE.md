@@ -229,6 +229,13 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.10.0** (2025-10-29) - Add "Fix Post Order" button for date synchronization
+- Orange button in admin panel syncs all post dates to match RSS publication dates
+- Fixes homepage ordering issues where posts appeared out of chronological order
+- Real-time progress tracking with detailed logging
+- Compares post_date with stored envirolink_pubdate metadata
+- Only updates posts with mismatched dates
+
 **v1.9.4** (2025-10-29) - Fix Guardian signed URL authentication errors
 - When RSS thumbnails have signatures + small width, return null to trigger article scraping
 - Article scraping gets 1200px Open Graph images (pre-signed, authenticated)
@@ -371,3 +378,11 @@ Posts are created with author ID 1 (hardcoded). This assumes user 1 exists in th
 - URL changes (http→https, trailing slash) may create duplicates
 - Hash-based change detection requires `envirolink_content_hash` field
 - "Update existing" mode compares content hash to avoid unnecessary AI calls
+
+### Post Ordering Issues
+- WordPress orders posts by `post_date` by default
+- Plugin sets `post_date` from RSS `pubDate` field when creating new posts
+- If RSS doesn't provide pubdate, or older posts were created before this feature, posts may have incorrect dates
+- **Solution**: Use the orange "Fix Post Order" button in admin to sync all post dates
+- The fix_post_dates() method compares WordPress post_date with stored envirolink_pubdate metadata
+- Only updates posts where dates don't match (skips already-correct posts)
