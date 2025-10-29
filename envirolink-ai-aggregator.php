@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.9.3
+ * Version: 1.9.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.9.3');
+define('ENVIROLINK_VERSION', '1.9.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1860,14 +1860,26 @@ class EnviroLink_AI_Aggregator {
                 $path_size = intval($matches[1]);
             }
 
+            // If URL has signature (authenticated), check width
+            if (isset($query_params['s'])) {
+                if ($current_width >= 500) {
+                    // Signature + good width: Preserve as-is
+                    $this->log_message('    → Guardian URL has signature and good width (' . $current_width . 'px), preserving');
+                    return $img_url;
+                } else {
+                    // Signature + small width: Can't modify without breaking auth
+                    // Return null to trigger article scraping fallback (gets better 1200px Open Graph images)
+                    $this->log_message('    → Guardian URL has signature but small width (' . $current_width . 'px)');
+                    $this->log_message('    → Cannot modify signed URL, returning null to trigger article scraping');
+                    return null;
+                }
+            }
+
+            // No signature: Safe to enhance
             // If current width is small (< 500px) but we have a large master size available
-            // Remove the signature and request the full master size
             if ($current_width < 500 && $path_size >= 500) {
                 $this->log_message('    → Guardian URL has small width (' . $current_width . 'px) but master is ' . $path_size . 'px');
-                $this->log_message('    → Removing signature and requesting full master size');
-
-                // Remove signature (we're changing the URL anyway)
-                unset($query_params['s']);
+                $this->log_message('    → No signature detected, requesting full master size');
 
                 // Request the full master size (or 1920px max for reasonable file size)
                 $query_params['width'] = min($path_size, 1920);
@@ -1875,18 +1887,12 @@ class EnviroLink_AI_Aggregator {
                 $query_params['auto'] = 'format';
                 $query_params['fit'] = 'bounds';
 
-                // Rebuild URL without signature
+                // Rebuild URL
                 $base_url = $parsed['scheme'] . '://' . $parsed['host'] . $parsed['path'];
                 $enhanced_url = $base_url . '?' . http_build_query($query_params);
 
                 $this->log_message('    → Enhanced to width=' . $query_params['width'] . 'px, quality=85');
                 return $enhanced_url;
-            }
-
-            // If URL has signature and width is already good (>= 500px), preserve it
-            if (isset($query_params['s']) && $current_width >= 500) {
-                $this->log_message('    → Guardian URL has signature and good width (' . $current_width . 'px), preserving');
-                return $img_url;
             }
 
             // No signature - safe to enhance parameters
