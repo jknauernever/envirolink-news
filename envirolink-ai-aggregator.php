@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.1.0');
+define('ENVIROLINK_VERSION', '1.1.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1091,15 +1091,14 @@ class EnviroLink_AI_Aggregator {
         // Try to extract first image from content
         $content = $item->get_content();
         if ($content) {
-            // Look for img tags and extract src attribute
-            // Handle both quoted and unquoted attributes, and query parameters
-            if (preg_match('/<img[^>]+src=(["\']?)([^"\'>\s]+)\1[^>]*>/i', $content, $matches)) {
-                $image_url = $matches[2];
-                // Decode HTML entities (like &amp;)
-                $image_url = html_entity_decode($image_url, ENT_QUOTES | ENT_HTML5);
-                // Verify it looks like an image URL
-                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url) ||
-                    strpos($image_url, 'grist.org') !== false) {
+            // Decode HTML entities (SimplePie may have already done this, but ensure it's decoded)
+            $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5);
+
+            // Extract src from img tag - match until closing quote
+            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
+                $image_url = $matches[1];
+                // Verify it's a valid image URL
+                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url)) {
                     return $image_url;
                 }
             }
@@ -1108,11 +1107,10 @@ class EnviroLink_AI_Aggregator {
         // Try description
         $description = $item->get_description();
         if ($description) {
-            if (preg_match('/<img[^>]+src=(["\']?)([^"\'>\s]+)\1[^>]*>/i', $description, $matches)) {
-                $image_url = $matches[2];
-                $image_url = html_entity_decode($image_url, ENT_QUOTES | ENT_HTML5);
-                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url) ||
-                    strpos($image_url, 'grist.org') !== false) {
+            $description = html_entity_decode($description, ENT_QUOTES | ENT_HTML5);
+            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $description, $matches)) {
+                $image_url = $matches[1];
+                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url)) {
                     return $image_url;
                 }
             }
@@ -1197,9 +1195,20 @@ class EnviroLink_AI_Aggregator {
             return false;
         }
 
-        // Get file info
+        // Parse URL to get clean filename without query parameters
+        // This fixes issues with URLs like "image.jpg?quality=75&strip=all"
+        $parsed_url = parse_url($image_url);
+        $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
+        $clean_filename = basename($path); // Get filename WITHOUT query string
+
+        // Fallback if parsing fails
+        if (empty($clean_filename)) {
+            $clean_filename = 'image-' . time() . '.jpg';
+        }
+
+        // Get file info with clean filename (no query parameters)
         $file_array = array(
-            'name' => basename($image_url),
+            'name' => $clean_filename,
             'tmp_name' => $tmp
         );
 
