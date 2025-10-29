@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.6.2
+ * Version: 1.7.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.6.2');
+define('ENVIROLINK_VERSION', '1.7.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1434,7 +1434,7 @@ class EnviroLink_AI_Aggregator {
             if ($this->is_valid_image_url($url)) {
                 $strategies[] = 'media:content';
                 $this->log_message('  → Found image via media:content');
-                return $url;
+                return $this->enhance_image_quality($url);
             }
         }
 
@@ -1444,7 +1444,7 @@ class EnviroLink_AI_Aggregator {
             if ($this->is_valid_image_url($url)) {
                 $strategies[] = 'media:thumbnail';
                 $this->log_message('  → Found image via media:thumbnail');
-                return $url;
+                return $this->enhance_image_quality($url);
             }
         }
 
@@ -1455,7 +1455,7 @@ class EnviroLink_AI_Aggregator {
             if ($this->is_valid_image_url($url)) {
                 $strategies[] = 'enclosure thumbnail';
                 $this->log_message('  → Found image via enclosure thumbnail');
-                return $url;
+                return $this->enhance_image_quality($url);
             }
         }
         if ($enclosure && $enclosure->get_link()) {
@@ -1463,7 +1463,7 @@ class EnviroLink_AI_Aggregator {
             if ($this->is_valid_image_url($url)) {
                 $strategies[] = 'enclosure link';
                 $this->log_message('  → Found image via enclosure link');
-                return $url;
+                return $this->enhance_image_quality($url);
             }
         }
 
@@ -1477,7 +1477,7 @@ class EnviroLink_AI_Aggregator {
                 if ($this->is_valid_image_url($matches[1])) {
                     $strategies[] = 'content img src';
                     $this->log_message('  → Found image in content via img src');
-                    return $matches[1];
+                    return $this->enhance_image_quality($matches[1]);
                 }
             }
 
@@ -1486,7 +1486,7 @@ class EnviroLink_AI_Aggregator {
                 if ($this->is_valid_image_url($matches[1])) {
                     $strategies[] = 'content img data-src';
                     $this->log_message('  → Found image in content via data-src');
-                    return $matches[1];
+                    return $this->enhance_image_quality($matches[1]);
                 }
             }
 
@@ -1498,7 +1498,7 @@ class EnviroLink_AI_Aggregator {
                     if ($this->is_valid_image_url($url_match[1])) {
                         $strategies[] = 'content img srcset';
                         $this->log_message('  → Found image in content via srcset');
-                        return $url_match[1];
+                        return $this->enhance_image_quality($url_match[1]);
                     }
                 }
             }
@@ -1513,7 +1513,7 @@ class EnviroLink_AI_Aggregator {
                 if ($this->is_valid_image_url($matches[1])) {
                     $strategies[] = 'description img src';
                     $this->log_message('  → Found image in description');
-                    return $matches[1];
+                    return $this->enhance_image_quality($matches[1]);
                 }
             }
         }
@@ -1551,7 +1551,7 @@ class EnviroLink_AI_Aggregator {
             $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
             if ($this->is_valid_image_url($img_url)) {
                 $this->log_message('    ✓ Found via Open Graph (og:image)');
-                return $img_url;
+                return $this->enhance_image_quality($img_url);
             }
         }
 
@@ -1560,7 +1560,7 @@ class EnviroLink_AI_Aggregator {
             $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
             if ($this->is_valid_image_url($img_url)) {
                 $this->log_message('    ✓ Found via Open Graph (og:image)');
-                return $img_url;
+                return $this->enhance_image_quality($img_url);
             }
         }
 
@@ -1569,7 +1569,7 @@ class EnviroLink_AI_Aggregator {
             $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
             if ($this->is_valid_image_url($img_url)) {
                 $this->log_message('    ✓ Found via Twitter Card');
-                return $img_url;
+                return $this->enhance_image_quality($img_url);
             }
         }
 
@@ -1578,7 +1578,7 @@ class EnviroLink_AI_Aggregator {
             $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
             if ($this->is_valid_image_url($img_url)) {
                 $this->log_message('    ✓ Found via Twitter Card');
-                return $img_url;
+                return $this->enhance_image_quality($img_url);
             }
         }
 
@@ -1595,13 +1595,52 @@ class EnviroLink_AI_Aggregator {
 
                 if ($this->is_valid_image_url($img_url)) {
                     $this->log_message('    ✓ Found first substantial image in article');
-                    return $img_url;
+                    return $this->enhance_image_quality($img_url);
                 }
             }
         }
 
         $this->log_message('    ✗ No images found on article page');
         return null;
+    }
+
+    /**
+     * Enhance image URL quality for known news sites
+     * Specifically handles Guardian images which use query parameters for size/quality
+     */
+    private function enhance_image_quality($img_url) {
+        // Guardian images: Increase width and quality parameters
+        if (strpos($img_url, 'i.guim.co.uk') !== false || strpos($img_url, 'theguardian.com') !== false) {
+            $parsed = parse_url($img_url);
+
+            // Parse existing query parameters
+            $query_params = array();
+            if (isset($parsed['query'])) {
+                parse_str($parsed['query'], $query_params);
+            }
+
+            // Set high quality parameters
+            $query_params['width'] = 1920;  // High resolution width
+            $query_params['quality'] = 85;   // High quality (Guardian max is typically 85)
+            $query_params['fit'] = 'bounds'; // Maintain aspect ratio
+            $query_params['dpr'] = 2;        // Retina display support
+
+            // Rebuild URL
+            $base_url = $parsed['scheme'] . '://' . $parsed['host'] . $parsed['path'];
+            $enhanced_url = $base_url . '?' . http_build_query($query_params);
+
+            $this->log_message('    → Enhanced Guardian image quality: width=1920, quality=85');
+            return $enhanced_url;
+        }
+
+        // For other sites, check for common quality parameters
+        if (preg_match('/[?&](w|width|size)=\d+/i', $img_url)) {
+            // Try to increase width parameter
+            $img_url = preg_replace('/([?&])(w|width|size)=\d+/i', '$1$2=1920', $img_url);
+            $this->log_message('    → Enhanced image width to 1920px');
+        }
+
+        return $img_url;
     }
 
     /**
