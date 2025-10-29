@@ -229,9 +229,20 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.9.2** (2025-10-29) - CRITICAL FIX: Stop re-downloading WordPress thumbnails
-- Fixed bug where image updater would skip WordPress-hosted images
-- Now properly fetches original images from RSS/article source
+**v1.9.4** (2025-10-29) - Fix Guardian signed URL authentication errors
+- When RSS thumbnails have signatures + small width, return null to trigger article scraping
+- Article scraping gets 1200px Open Graph images (pre-signed, authenticated)
+- Prevents "Unauthorized" errors from modifying signed URLs
+
+**v1.9.3** (2025-10-29) - Fix HTTP/HTTPS mismatch in WordPress image detection
+- v1.9.2 fix failed due to protocol differences (http vs https)
+- Changed to protocol-agnostic hostname comparison using `parse_url()`
+- Now correctly identifies WordPress-hosted images regardless of protocol
+
+**v1.9.2** (2025-10-29) - CRITICAL FIX: Stop re-downloading WordPress thumbnails (BROKEN)
+- Attempted to fix bug where image updater would re-download from own server
+- Bug: Used string matching with full URLs, failed on http/https mismatch
+- Fixed in v1.9.3
 
 **v1.9.1** - Fix log overwrite bug
 - Purple button log now persists properly after completion
@@ -239,12 +250,6 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 **v1.9.0** - Fix blurry Guardian images
 - Enhanced image quality detection and URL parameter upgrading
 - Detects and upgrades low-res thumbnails to high-res versions
-
-**v1.8.4** - Fix Guardian signature validation
-- Preserve authenticated URLs with signatures
-- Only modify unsigned URLs to avoid breaking CDN authentication
-
-**v1.8.3** - Add detailed logging to image download/upload process
 
 ## Image Processing Architecture
 
@@ -257,10 +262,13 @@ The plugin implements sophisticated image extraction with multiple fallback stra
 4. **Web Scraping**: Fetch article page and extract Open Graph/Twitter Card images
 
 ### Quality Enhancement
-- **Guardian Images**: Detects Guardian CDN URLs (`i.guim.co.uk`) and upgrades quality parameters
-  - Checks for signed URLs (preserve authentication)
-  - Extracts master image dimensions from path
-  - Upgrades to high-res (1920px, quality=85) when safe
+- **Guardian Images**: Detects Guardian CDN URLs (`i.guim.co.uk`) and handles authentication
+  - **Signed + Good Width (≥500px)**: Preserve as-is (authenticated, already good quality)
+  - **Signed + Small Width (<500px)**: Return null to trigger article scraping fallback (v1.9.4)
+    - Article scraping retrieves 1200px Open Graph images (pre-signed, authenticated)
+    - Avoids "Unauthorized" errors from modifying signed URLs
+  - **Unsigned + Small Width**: Safe to enhance, extracts master dimensions and upgrades to 1920px
+  - **Unsigned + Any Width**: Safe to enhance quality parameters
 - **Generic URLs**: Attempts to upgrade width/quality parameters
 - See `enhance_image_quality()` method (line ~1836)
 
