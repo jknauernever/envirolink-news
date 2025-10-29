@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.8.0
+ * Version: 1.8.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.8.0');
+define('ENVIROLINK_VERSION', '1.8.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1195,12 +1195,49 @@ class EnviroLink_AI_Aggregator {
                 continue;
             }
 
-            // Try to extract image from article page
-            $this->log_message('  → Fetching from: ' . $source_url);
-            $image_url = $this->extract_image_from_url($source_url);
+            $image_url = null;
 
+            // Strategy 1: Check if there's already an image URL we can enhance
+            $current_thumbnail_id = get_post_thumbnail_id($post->ID);
+            if ($current_thumbnail_id) {
+                $current_image_url = wp_get_attachment_url($current_thumbnail_id);
+                if ($current_image_url) {
+                    $this->log_message('  → Found existing image, enhancing quality...');
+                    $image_url = $this->enhance_image_quality($current_image_url);
+                }
+            }
+
+            // Strategy 2: Try to extract from RSS feed item (more reliable than scraping)
+            if (!$image_url) {
+                $this->log_message('  → Fetching from RSS feed...');
+
+                // Fetch the feed
+                $rss = fetch_feed($feed['url']);
+                if (!is_wp_error($rss)) {
+                    $items = $rss->get_items(0, 50); // Get more items to find match
+
+                    // Find the matching RSS item by URL
+                    foreach ($items as $item) {
+                        $item_link = $item->get_permalink();
+                        if ($item_link === $source_url) {
+                            $this->log_message('  → Found matching RSS item');
+                            $image_url = $this->extract_feed_image($item);
+                            break;
+                        }
+                    }
+                } else {
+                    $this->log_message('  → Failed to fetch RSS feed: ' . $rss->get_error_message());
+                }
+            }
+
+            // Strategy 3: Fall back to scraping article page
+            if (!$image_url) {
+                $this->log_message('  → Scraping article page: ' . $source_url);
+                $image_url = $this->extract_image_from_url($source_url);
+            }
+
+            // Set/update the featured image
             if ($image_url) {
-                // Set/update the featured image
                 $success = $this->set_featured_image_from_url($image_url, $post->ID);
                 if ($success) {
                     $this->log_message('  → ✓ Image updated successfully');
@@ -1210,7 +1247,7 @@ class EnviroLink_AI_Aggregator {
                     $failed_count++;
                 }
             } else {
-                $this->log_message('  → No image found');
+                $this->log_message('  → ✗ No image found via any method');
                 $failed_count++;
             }
         }
