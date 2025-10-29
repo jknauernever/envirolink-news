@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.6.0
+ * Version: 1.6.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.6.0');
+define('ENVIROLINK_VERSION', '1.6.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1153,27 +1153,45 @@ class EnviroLink_AI_Aggregator {
                 $content_hash = md5($original_title . '|' . $original_text);
 
                 // If updating existing post, check if content has actually changed
+                // AND check if post is missing a featured image
+                $needs_ai_update = true;
+                $needs_image_only = false;
+
                 if ($is_update) {
                     $existing_hash = get_post_meta($existing_post_id, 'envirolink_content_hash', true);
-                    if ($existing_hash === $content_hash) {
-                        // Content hasn't changed - skip AI processing to save time and money
+                    $has_featured_image = has_post_thumbnail($existing_post_id);
+                    $content_changed = ($existing_hash !== $content_hash);
+
+                    if (!$has_featured_image && !$content_changed) {
+                        // Post exists, no image, but content unchanged
+                        // Skip AI, just try to get image
+                        $needs_ai_update = false;
+                        $needs_image_only = true;
+                        $total_skipped++;
+                        $this->log_message('→ No changes detected, but missing image - will try to fetch image only');
+                    } elseif ($has_featured_image && !$content_changed) {
+                        // Post exists with image and content unchanged - skip entirely
                         $total_skipped++;
                         $this->log_message('→ No changes detected, skipped AI processing');
                         continue;
                     } else {
+                        // Content changed - do full AI update
                         $this->log_message('→ Changes detected, sending to AI...');
                     }
                 } else {
                     $this->log_message('→ Sending to AI...');
                 }
 
-                // Rewrite using AI
-                $rewritten = $this->rewrite_with_ai($original_title, $original_text, $api_key);
-                
-                if (!$rewritten) {
-                    continue;
+                // Rewrite using AI (unless we only need image)
+                $rewritten = null;
+                if ($needs_ai_update) {
+                    $rewritten = $this->rewrite_with_ai($original_title, $original_text, $api_key);
+
+                    if (!$rewritten) {
+                        continue;
+                    }
                 }
-                
+
                 // Extract image from feed
                 $image_url = $this->extract_feed_image($item);
 
@@ -1191,49 +1209,69 @@ class EnviroLink_AI_Aggregator {
 
                 // Create or update WordPress post
                 if ($is_update) {
-                    // Update existing post
-                    $post_data = array(
-                        'ID' => $existing_post_id,
-                        'post_title' => $rewritten['title'],
-                        'post_content' => $rewritten['content']
-                    );
+                    if ($needs_image_only) {
+                        // Image-only update: don't update post content, just try to add image
+                        $post_id = $existing_post_id;
 
-                    $post_id = wp_update_post($post_data);
-
-                    if ($post_id) {
-                        $this->log_message('→ Updated post successfully');
-                        // Update metadata
-                        update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
-                        update_post_meta($post_id, 'envirolink_original_title', $original_title);
-                        update_post_meta($post_id, 'envirolink_last_updated', current_time('mysql'));
-                        update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
-
-                        // Store feed metadata
-                        if (isset($feed_metadata['author'])) {
-                            update_post_meta($post_id, 'envirolink_author', $feed_metadata['author']);
-                        }
-                        if (isset($feed_metadata['pubdate'])) {
-                            update_post_meta($post_id, 'envirolink_pubdate', $feed_metadata['pubdate']);
-                        }
-                        if (isset($feed_metadata['topic_tags'])) {
-                            update_post_meta($post_id, 'envirolink_topic_tags', $feed_metadata['topic_tags']);
-                        }
-                        if (isset($feed_metadata['locations'])) {
-                            update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
-                        }
-
-                        // Convert topic tags to WordPress tags
-                        if (isset($feed_metadata['topic_tags'])) {
-                            $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
-                            wp_set_post_tags($post_id, $tag_array, false);
-                        }
-
-                        // Update featured image if found
                         if ($image_url) {
-                            $this->set_featured_image_from_url($image_url, $post_id);
+                            $this->log_message('→ Attempting to add missing featured image...');
+                            $success = $this->set_featured_image_from_url($image_url, $post_id);
+                            if ($success) {
+                                $this->log_message('→ Successfully added featured image');
+                            } else {
+                                $this->log_message('→ Failed to add featured image');
+                            }
+                        } else {
+                            $this->log_message('→ No image available to add');
                         }
 
-                        $total_updated++;
+                        // Don't count as updated since content didn't change
+                        continue;
+                    } else {
+                        // Full content update
+                        $post_data = array(
+                            'ID' => $existing_post_id,
+                            'post_title' => $rewritten['title'],
+                            'post_content' => $rewritten['content']
+                        );
+
+                        $post_id = wp_update_post($post_data);
+
+                        if ($post_id) {
+                            $this->log_message('→ Updated post successfully');
+                            // Update metadata
+                            update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
+                            update_post_meta($post_id, 'envirolink_original_title', $original_title);
+                            update_post_meta($post_id, 'envirolink_last_updated', current_time('mysql'));
+                            update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
+
+                            // Store feed metadata
+                            if (isset($feed_metadata['author'])) {
+                                update_post_meta($post_id, 'envirolink_author', $feed_metadata['author']);
+                            }
+                            if (isset($feed_metadata['pubdate'])) {
+                                update_post_meta($post_id, 'envirolink_pubdate', $feed_metadata['pubdate']);
+                            }
+                            if (isset($feed_metadata['topic_tags'])) {
+                                update_post_meta($post_id, 'envirolink_topic_tags', $feed_metadata['topic_tags']);
+                            }
+                            if (isset($feed_metadata['locations'])) {
+                                update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
+                            }
+
+                            // Convert topic tags to WordPress tags
+                            if (isset($feed_metadata['topic_tags'])) {
+                                $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
+                                wp_set_post_tags($post_id, $tag_array, false);
+                            }
+
+                            // Update featured image if found
+                            if ($image_url) {
+                                $this->set_featured_image_from_url($image_url, $post_id);
+                            }
+
+                            $total_updated++;
+                        }
                     }
                 } else {
                     // Create new post using original publication date
