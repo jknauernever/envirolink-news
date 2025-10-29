@@ -229,13 +229,18 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.11.0** (2025-10-29) - Add "Randomize Daily Order" setting to prevent source clustering
+**v1.11.1** (2025-10-29) - CRITICAL FIX: Prevent frontend crashes from randomize_daily_order
+- v1.11.0 filter was too broad and caused site crashes
+- `is_sitemap()` doesn't exist in WordPress < 5.5 - added function_exists() checks
+- Weak post_type checking affected pages, custom post types, widgets
+- Now explicitly whitelists query types: home, archive, category, tag, author, date only
+- Added safety checks for $query, $wpdb existence
+- Much more defensive filtering prevents crashes
+
+**v1.11.0** (2025-10-29) - Add "Randomize Daily Order" setting (BROKEN - caused crashes)
 - New checkbox in Settings: "Randomize order of posts within the same day"
-- Prevents posts from same day being grouped by source (all Guardian, then all Mongabay, etc.)
-- Modifies WordPress ORDER BY: `DATE(post_date) DESC, RAND()`
-- Keeps newest days first, but randomizes within each day
-- Does not modify post timestamps in database
-- Only affects frontend main query (not admin, RSS, sitemaps)
+- Prevents posts from same day being grouped by source
+- Fixed in v1.11.1
 
 **v1.10.2** (2025-10-29) - Fix BBC image enhancement to support all URL patterns
 - v1.10.1 only handled 2 of 4 BBC URL patterns, causing "couldn't parse width pattern" errors
