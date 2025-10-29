@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.2.2
+ * Version: 1.2.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.2.2');
+define('ENVIROLINK_VERSION', '1.2.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -886,13 +886,13 @@ class EnviroLink_AI_Aggregator {
             }
 
             // Set custom User-Agent to avoid being blocked
-            add_filter('http_headers_useragent', array($this, 'custom_user_agent'));
+            add_filter('http_request_args', array($this, 'custom_http_request_args'), 10, 2);
 
             // Fetch RSS feed
             $rss = fetch_feed($feed['url']);
 
             // Remove filter after fetch
-            remove_filter('http_headers_useragent', array($this, 'custom_user_agent'));
+            remove_filter('http_request_args', array($this, 'custom_http_request_args'), 10);
 
             if (is_wp_error($rss)) {
                 $failed_feeds[] = $feed['name'] . ' (' . $rss->get_error_message() . ')';
@@ -1088,8 +1088,10 @@ class EnviroLink_AI_Aggregator {
      * Custom User-Agent for RSS feed requests
      * Helps avoid being blocked by feed providers
      */
-    public function custom_user_agent($user_agent) {
-        return 'EnviroLink News Aggregator/1.2 (+https://envirolink.org; WordPress/' . get_bloginfo('version') . ')';
+    public function custom_http_request_args($args, $url) {
+        $args['user-agent'] = 'EnviroLink News Aggregator/1.2 (+https://envirolink.org; WordPress/' . get_bloginfo('version') . ')';
+        $args['timeout'] = 15; // Increase timeout to 15 seconds
+        return $args;
     }
 
     /**
