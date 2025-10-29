@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.2.3
+ * Version: 1.3.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.2.3');
+define('ENVIROLINK_VERSION', '1.3.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -868,6 +868,7 @@ class EnviroLink_AI_Aggregator {
         $total_processed = 0;
         $total_created = 0;
         $total_updated = 0;
+        $total_skipped = 0;
         $failed_feeds = array();
 
         foreach ($feeds as $index => $feed) {
@@ -932,10 +933,23 @@ class EnviroLink_AI_Aggregator {
                 $original_title = $item->get_title();
                 $original_description = $item->get_description();
                 $original_content = $item->get_content();
-                
+
                 // Combine description and content
                 $original_text = trim($original_description . "\n\n" . strip_tags($original_content));
-                
+
+                // Generate content hash for change detection
+                $content_hash = md5($original_title . '|' . $original_text);
+
+                // If updating existing post, check if content has actually changed
+                if ($is_update) {
+                    $existing_hash = get_post_meta($existing_post_id, 'envirolink_content_hash', true);
+                    if ($existing_hash === $content_hash) {
+                        // Content hasn't changed - skip AI processing to save time and money
+                        $total_skipped++;
+                        continue;
+                    }
+                }
+
                 // Rewrite using AI
                 $rewritten = $this->rewrite_with_ai($original_title, $original_text, $api_key);
                 
@@ -968,6 +982,7 @@ class EnviroLink_AI_Aggregator {
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
                         update_post_meta($post_id, 'envirolink_last_updated', current_time('mysql'));
+                        update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
 
                         // Store feed metadata
                         if (isset($feed_metadata['author'])) {
@@ -1027,6 +1042,7 @@ class EnviroLink_AI_Aggregator {
                         update_post_meta($post_id, 'envirolink_source_url', $original_link);
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
+                        update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
 
                         // Store feed metadata
                         if (isset($feed_metadata['author'])) {
@@ -1073,6 +1089,9 @@ class EnviroLink_AI_Aggregator {
         }
         if ($total_updated > 0) {
             $message .= ", updated {$total_updated} existing posts";
+        }
+        if ($total_skipped > 0) {
+            $message .= ", skipped {$total_skipped} unchanged articles (saved AI costs)";
         }
         if (!empty($failed_feeds)) {
             $message .= ". Warning: Failed to fetch " . count($failed_feeds) . " feed(s): " . implode('; ', $failed_feeds);
