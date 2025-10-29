@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.6.1
+ * Version: 1.6.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.6.1');
+define('ENVIROLINK_VERSION', '1.6.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -48,6 +48,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_run_now', array($this, 'ajax_run_now'));
         add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
         add_action('wp_ajax_envirolink_get_progress', array($this, 'ajax_get_progress'));
+        add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
     }
     
     /**
@@ -652,7 +653,25 @@ class EnviroLink_AI_Aggregator {
                 $('.tab-content').hide();
                 $($(this).attr('href') + '-tab').show();
             });
-            
+
+            // Load saved log from last run on page load
+            function loadSavedLog() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_get_saved_log' },
+                    success: function(response) {
+                        if (response.success && response.data.log && response.data.log.length > 0) {
+                            var logHtml = response.data.log.join('<br>');
+                            $('#envirolink-log-content').html(logHtml);
+                        }
+                    }
+                });
+            }
+
+            // Load saved log when page loads
+            loadSavedLog();
+
             // Progress polling
             var progressInterval = null;
 
@@ -702,6 +721,10 @@ class EnviroLink_AI_Aggregator {
                 }
                 setTimeout(function() {
                     $('#envirolink-progress-container').fadeOut();
+                    // Reload the saved log after hiding progress
+                    setTimeout(function() {
+                        loadSavedLog();
+                    }, 500);
                 }, 2000); // Hide after 2 seconds
             }
 
@@ -928,6 +951,19 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * AJAX: Get saved log from last run
+     */
+    public function ajax_get_saved_log() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $saved_log = get_option('envirolink_last_run_log', array());
+        wp_send_json_success(array('log' => $saved_log));
+    }
+
+    /**
      * Update progress status
      */
     private function update_progress($data) {
@@ -961,9 +997,14 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
-     * Clear progress status
+     * Clear progress status (but save the log for later viewing)
      */
     private function clear_progress() {
+        // Save the final log before clearing
+        $progress = get_transient('envirolink_progress');
+        if ($progress && isset($progress['log'])) {
+            update_option('envirolink_last_run_log', $progress['log']);
+        }
         delete_transient('envirolink_progress');
     }
 
