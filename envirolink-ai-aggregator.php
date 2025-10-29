@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.3.0');
+define('ENVIROLINK_VERSION', '1.4.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -47,6 +47,7 @@ class EnviroLink_AI_Aggregator {
         // AJAX handlers
         add_action('wp_ajax_envirolink_run_now', array($this, 'ajax_run_now'));
         add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
+        add_action('wp_ajax_envirolink_get_progress', array($this, 'ajax_get_progress'));
     }
     
     /**
@@ -267,6 +268,20 @@ class EnviroLink_AI_Aggregator {
                         <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
                         <span id="run-now-status" style="margin-left: 10px;"></span>
                     </p>
+
+                    <!-- Progress Bar -->
+                    <div id="envirolink-progress-container" style="display: none; margin-top: 15px;">
+                        <div style="margin-bottom: 5px;">
+                            <strong id="envirolink-progress-status">Processing...</strong>
+                            <span id="envirolink-progress-percent" style="float: right;">0%</span>
+                        </div>
+                        <div style="width: 100%; height: 25px; background-color: #f0f0f0; border-radius: 3px; overflow: hidden;">
+                            <div id="envirolink-progress-bar" style="width: 0%; height: 100%; background-color: #2271b1; transition: width 0.3s ease;"></div>
+                        </div>
+                        <div id="envirolink-progress-detail" style="margin-top: 5px; font-size: 12px; color: #666;">
+                            <span id="envirolink-progress-current">0</span> of <span id="envirolink-progress-total">0</span> feeds
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card" style="flex: 1; max-width: 400px;">
@@ -630,21 +645,60 @@ class EnviroLink_AI_Aggregator {
                 $($(this).attr('href') + '-tab').show();
             });
             
+            // Progress polling
+            var progressInterval = null;
+
+            function startProgressPolling() {
+                if (progressInterval) clearInterval(progressInterval);
+
+                $('#envirolink-progress-container').show();
+
+                progressInterval = setInterval(function() {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: { action: 'envirolink_get_progress' },
+                        success: function(response) {
+                            if (response.success && response.data.active) {
+                                var data = response.data;
+                                $('#envirolink-progress-bar').css('width', data.percent + '%');
+                                $('#envirolink-progress-percent').text(data.percent + '%');
+                                $('#envirolink-progress-status').text(data.status);
+                                $('#envirolink-progress-current').text(data.current);
+                                $('#envirolink-progress-total').text(data.total);
+                            } else {
+                                stopProgressPolling();
+                            }
+                        }
+                    });
+                }, 500); // Poll every 500ms
+            }
+
+            function stopProgressPolling() {
+                if (progressInterval) {
+                    clearInterval(progressInterval);
+                    progressInterval = null;
+                }
+                setTimeout(function() {
+                    $('#envirolink-progress-container').fadeOut();
+                }, 2000); // Hide after 2 seconds
+            }
+
             // Run now button (all feeds)
             $('#run-now-btn').click(function() {
                 var btn = $(this);
                 var status = $('#run-now-status');
 
                 btn.prop('disabled', true);
-                status.html('<span style="color: blue;">Running...</span>');
+                status.html('');
+                startProgressPolling();
 
                 $.ajax({
                     url: ajaxurl,
                     type: 'POST',
-                    data: {
-                        action: 'envirolink_run_now'
-                    },
+                    data: { action: 'envirolink_run_now' },
                     success: function(response) {
+                        stopProgressPolling();
                         if (response.success) {
                             status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
                         } else {
@@ -653,6 +707,7 @@ class EnviroLink_AI_Aggregator {
                         btn.prop('disabled', false);
                     },
                     error: function() {
+                        stopProgressPolling();
                         status.html('<span style="color: red;">✗ Error occurred</span>');
                         btn.prop('disabled', false);
                     }
@@ -668,6 +723,8 @@ class EnviroLink_AI_Aggregator {
 
                 btn.prop('disabled', true);
                 icon.addClass('dashicons-update-spin');
+                $('#run-now-status').html('');
+                startProgressPolling();
 
                 $.ajax({
                     url: ajaxurl,
@@ -677,6 +734,7 @@ class EnviroLink_AI_Aggregator {
                         feed_index: feedIndex
                     },
                     success: function(response) {
+                        stopProgressPolling();
                         icon.removeClass('dashicons-update-spin');
                         if (response.success) {
                             // Show success feedback
@@ -694,6 +752,7 @@ class EnviroLink_AI_Aggregator {
                         }
                     },
                     error: function() {
+                        stopProgressPolling();
                         icon.removeClass('dashicons-update-spin');
                         btn.prop('disabled', false);
                         $('#run-now-status').html('<span style="color: red;">✗ Error updating ' + feedName + '</span>');
@@ -810,7 +869,39 @@ class EnviroLink_AI_Aggregator {
             wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
         }
     }
-    
+
+    /**
+     * AJAX: Get current progress
+     */
+    public function ajax_get_progress() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $progress = get_transient('envirolink_progress');
+        if ($progress === false) {
+            // No progress data
+            wp_send_json_success(array('active' => false));
+        } else {
+            wp_send_json_success(array_merge(array('active' => true), $progress));
+        }
+    }
+
+    /**
+     * Update progress status
+     */
+    private function update_progress($data) {
+        set_transient('envirolink_progress', $data, 300); // 5 minute expiration
+    }
+
+    /**
+     * Clear progress status
+     */
+    private function clear_progress() {
+        delete_transient('envirolink_progress');
+    }
+
     /**
      * Check if a feed is due for processing based on its schedule
      */
@@ -871,20 +962,45 @@ class EnviroLink_AI_Aggregator {
         $total_skipped = 0;
         $failed_feeds = array();
 
+        // Calculate total feeds to process for progress tracking
+        $feeds_to_process = array();
         foreach ($feeds as $index => $feed) {
-            // If specific feed requested, skip all others
             if ($specific_feed_index !== null && $index !== $specific_feed_index) {
                 continue;
             }
-
             if (!$feed['enabled']) {
                 continue;
             }
-
-            // Check if feed is due for processing (skip check for manual runs)
             if (!$manual_run && !$this->is_feed_due($feed)) {
                 continue;
             }
+            $feeds_to_process[] = array('index' => $index, 'feed' => $feed);
+        }
+
+        $total_feeds = count($feeds_to_process);
+        $current_feed_num = 0;
+
+        // Initialize progress
+        $this->update_progress(array(
+            'percent' => 0,
+            'current' => 0,
+            'total' => $total_feeds,
+            'status' => 'Starting...'
+        ));
+
+        foreach ($feeds_to_process as $feed_data) {
+            $index = $feed_data['index'];
+            $feed = $feed_data['feed'];
+            $current_feed_num++;
+
+            // Update progress for this feed
+            $percent = floor(($current_feed_num / $total_feeds) * 100);
+            $this->update_progress(array(
+                'percent' => $percent,
+                'current' => $current_feed_num,
+                'total' => $total_feeds,
+                'status' => 'Processing ' . esc_html($feed['name']) . '...'
+            ));
 
             // Set custom User-Agent to avoid being blocked
             add_filter('http_request_args', array($this, 'custom_http_request_args'), 10, 2);
@@ -1096,6 +1212,9 @@ class EnviroLink_AI_Aggregator {
         if (!empty($failed_feeds)) {
             $message .= ". Warning: Failed to fetch " . count($failed_feeds) . " feed(s): " . implode('; ', $failed_feeds);
         }
+
+        // Clear progress tracking
+        $this->clear_progress();
 
         return array(
             'success' => true,
