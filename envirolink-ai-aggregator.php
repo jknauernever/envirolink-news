@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.10.1
+ * Version: 1.10.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.10.1');
+define('ENVIROLINK_VERSION', '1.10.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2077,22 +2077,26 @@ class EnviroLink_AI_Aggregator {
         }
 
         // BBC images: Upgrade width in URL path
-        // BBC format: https://ichef.bbci.co.uk/news/[WIDTH]/cpsprodpb/...
+        // BBC formats:
+        // 1. https://ichef.bbci.co.uk/news/[WIDTH]/...
+        // 2. https://ichef.bbci.co.uk/ace/standard/[WIDTH]/...
+        // 3. https://ichef.bbci.co.uk/ace/ws/[WIDTH]/...
+        // 4. https://ichef.bbci.co.uk/images/ic/[WIDTHxHEIGHT]/...
         // Widths: 240, 320, 480, 640, 800, 976, 1024 (max)
         if (strpos($img_url, 'ichef.bbci.co.uk') !== false) {
             $parsed = parse_url($img_url);
 
-            // Match the width in the path: /news/WIDTH/ or /ace/ws/WIDTH/
-            if (preg_match('#/(news|ace/ws)/(\d+)/#', $parsed['path'], $matches)) {
+            // Pattern 1-3: /news/WIDTH/ or /ace/standard/WIDTH/ or /ace/ws/WIDTH/
+            if (preg_match('#/(news|ace/standard|ace/ws)/(\d+)/#', $parsed['path'], $matches)) {
                 $current_width = intval($matches[2]);
-                $path_prefix = $matches[1]; // 'news' or 'ace/ws'
+                $path_prefix = $matches[1]; // 'news' or 'ace/standard' or 'ace/ws'
 
                 if ($current_width < 1024) {
                     $this->log_message('    → BBC URL has width ' . $current_width . 'px, upgrading to 1024px');
 
                     // Replace the width in the path with 1024
                     $new_path = preg_replace(
-                        '#/(news|ace/ws)/\d+/#',
+                        '#/(news|ace/standard|ace/ws)/\d+/#',
                         '/' . $path_prefix . '/1024/',
                         $parsed['path']
                     );
@@ -2107,6 +2111,40 @@ class EnviroLink_AI_Aggregator {
                     return $enhanced_url;
                 } else {
                     $this->log_message('    → BBC URL already at maximum width (' . $current_width . 'px)');
+                    return $img_url;
+                }
+            }
+
+            // Pattern 4: /images/ic/WIDTHxHEIGHT/ (e.g., 240x135)
+            if (preg_match('#/images/ic/(\d+)x(\d+)/#', $parsed['path'], $matches)) {
+                $current_width = intval($matches[1]);
+                $current_height = intval($matches[2]);
+
+                if ($current_width < 1024) {
+                    // Calculate proportional height maintaining aspect ratio
+                    $aspect_ratio = $current_height / $current_width;
+                    $new_width = 1024;
+                    $new_height = intval($new_width * $aspect_ratio);
+
+                    $this->log_message('    → BBC URL has dimensions ' . $current_width . 'x' . $current_height . ', upgrading to ' . $new_width . 'x' . $new_height);
+
+                    // Replace dimensions in path
+                    $new_path = preg_replace(
+                        '#/images/ic/\d+x\d+/#',
+                        '/images/ic/' . $new_width . 'x' . $new_height . '/',
+                        $parsed['path']
+                    );
+
+                    // Rebuild URL
+                    $enhanced_url = $parsed['scheme'] . '://' . $parsed['host'] . $new_path;
+                    if (isset($parsed['query'])) {
+                        $enhanced_url .= '?' . $parsed['query'];
+                    }
+
+                    $this->log_message('    → Enhanced BBC image dimensions');
+                    return $enhanced_url;
+                } else {
+                    $this->log_message('    → BBC URL already at high resolution (' . $current_width . 'x' . $current_height . ')');
                     return $img_url;
                 }
             }
