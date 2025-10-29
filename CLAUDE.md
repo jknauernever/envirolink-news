@@ -229,6 +229,12 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.10.1** (2025-10-29) - Add BBC image quality enhancement
+- BBC images were downloading at tiny sizes (240px, 320px thumbnails)
+- Detects ichef.bbci.co.uk URLs and upgrades width in path to 1024px (maximum)
+- Similar to Guardian logic but simpler (width in path vs query parameters)
+- Does not affect other feeds
+
 **v1.10.0** (2025-10-29) - Add "Fix Post Order" button for date synchronization
 - Orange button in admin panel syncs all post dates to match RSS publication dates
 - Fixes homepage ordering issues where posts appeared out of chronological order
@@ -276,8 +282,13 @@ The plugin implements sophisticated image extraction with multiple fallback stra
     - Avoids "Unauthorized" errors from modifying signed URLs
   - **Unsigned + Small Width**: Safe to enhance, extracts master dimensions and upgrades to 1920px
   - **Unsigned + Any Width**: Safe to enhance quality parameters
-- **Generic URLs**: Attempts to upgrade width/quality parameters
-- See `enhance_image_quality()` method (line ~1836)
+- **BBC Images**: Detects BBC CDN URLs (`ichef.bbci.co.uk`) and upgrades width in path (v1.10.1)
+  - BBC format: `/news/WIDTH/` or `/ace/ws/WIDTH/` where WIDTH is 240, 320, 480, 640, 800, 976, or 1024
+  - Replaces any width < 1024 with 1024 (BBC's maximum resolution)
+  - Simpler than Guardian - no authentication, width is in URL path not query params
+  - Example: `/news/240/` → `/news/1024/`
+- **Generic URLs**: Attempts to upgrade width/quality query parameters
+- See `enhance_image_quality()` method (line ~2005)
 
 ### Update Images Feature (Purple Button)
 - Re-downloads all images for a specific feed's posts
