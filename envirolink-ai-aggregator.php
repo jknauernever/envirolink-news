@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.4.0
+ * Version: 1.5.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.4.0');
+define('ENVIROLINK_VERSION', '1.5.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -279,7 +279,15 @@ class EnviroLink_AI_Aggregator {
                             <div id="envirolink-progress-bar" style="width: 0%; height: 100%; background-color: #2271b1; transition: width 0.3s ease;"></div>
                         </div>
                         <div id="envirolink-progress-detail" style="margin-top: 5px; font-size: 12px; color: #666;">
-                            <span id="envirolink-progress-current">0</span> of <span id="envirolink-progress-total">0</span> feeds
+                            <span id="envirolink-progress-current">0</span> of <span id="envirolink-progress-total">0</span> articles
+                        </div>
+
+                        <!-- Log Viewer -->
+                        <div style="margin-top: 10px;">
+                            <button type="button" class="button button-small" id="toggle-log-btn">Show Detailed Log</button>
+                        </div>
+                        <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 11px; line-height: 1.5;">
+                            <div id="envirolink-log-content"></div>
                         </div>
                     </div>
                 </div>
@@ -652,6 +660,7 @@ class EnviroLink_AI_Aggregator {
                 if (progressInterval) clearInterval(progressInterval);
 
                 $('#envirolink-progress-container').show();
+                $('#envirolink-log-content').html(''); // Clear previous logs
 
                 progressInterval = setInterval(function() {
                     $.ajax({
@@ -666,6 +675,18 @@ class EnviroLink_AI_Aggregator {
                                 $('#envirolink-progress-status').text(data.status);
                                 $('#envirolink-progress-current').text(data.current);
                                 $('#envirolink-progress-total').text(data.total);
+
+                                // Update log
+                                if (data.log && data.log.length > 0) {
+                                    var logHtml = data.log.join('<br>');
+                                    $('#envirolink-log-content').html(logHtml);
+
+                                    // Auto-scroll to bottom if log is visible
+                                    if ($('#envirolink-log-container').is(':visible')) {
+                                        var logContainer = $('#envirolink-log-container')[0];
+                                        logContainer.scrollTop = logContainer.scrollHeight;
+                                    }
+                                }
                             } else {
                                 stopProgressPolling();
                             }
@@ -791,6 +812,24 @@ class EnviroLink_AI_Aggregator {
                     $(this).fadeOut();
                 }
             });
+
+            // Toggle log viewer
+            $('#toggle-log-btn').click(function() {
+                var btn = $(this);
+                var logContainer = $('#envirolink-log-container');
+
+                if (logContainer.is(':visible')) {
+                    logContainer.slideUp();
+                    btn.text('Show Detailed Log');
+                } else {
+                    logContainer.slideDown();
+                    btn.text('Hide Detailed Log');
+                    // Auto-scroll to bottom
+                    setTimeout(function() {
+                        logContainer[0].scrollTop = logContainer[0].scrollHeight;
+                    }, 100);
+                }
+            });
         });
         </script>
         
@@ -892,7 +931,33 @@ class EnviroLink_AI_Aggregator {
      * Update progress status
      */
     private function update_progress($data) {
+        // Keep existing log if not provided
+        $current = get_transient('envirolink_progress');
+        if ($current && isset($current['log']) && !isset($data['log'])) {
+            $data['log'] = $current['log'];
+        }
         set_transient('envirolink_progress', $data, 300); // 5 minute expiration
+    }
+
+    /**
+     * Add a log message to progress
+     */
+    private function log_message($message) {
+        $progress = get_transient('envirolink_progress');
+        if ($progress === false) {
+            $progress = array('log' => array());
+        }
+        if (!isset($progress['log'])) {
+            $progress['log'] = array();
+        }
+        $progress['log'][] = '[' . date('H:i:s') . '] ' . $message;
+
+        // Keep only last 100 messages to avoid memory issues
+        if (count($progress['log']) > 100) {
+            $progress['log'] = array_slice($progress['log'], -100);
+        }
+
+        set_transient('envirolink_progress', $progress, 300);
     }
 
     /**
@@ -962,7 +1027,7 @@ class EnviroLink_AI_Aggregator {
         $total_skipped = 0;
         $failed_feeds = array();
 
-        // Calculate total feeds to process for progress tracking
+        // Calculate total feeds to process
         $feeds_to_process = array();
         foreach ($feeds as $index => $feed) {
             if ($specific_feed_index !== null && $index !== $specific_feed_index) {
@@ -977,30 +1042,46 @@ class EnviroLink_AI_Aggregator {
             $feeds_to_process[] = array('index' => $index, 'feed' => $feed);
         }
 
-        $total_feeds = count($feeds_to_process);
-        $current_feed_num = 0;
-
         // Initialize progress
         $this->update_progress(array(
             'percent' => 0,
             'current' => 0,
-            'total' => $total_feeds,
-            'status' => 'Starting...'
+            'total' => 0,
+            'status' => 'Counting articles...',
+            'log' => array('Started processing')
         ));
+
+        // First pass: count total articles
+        $total_articles = 0;
+        $feed_article_counts = array();
+
+        foreach ($feeds_to_process as $feed_data) {
+            $feed = $feed_data['feed'];
+            add_filter('http_request_args', array($this, 'custom_http_request_args'), 10, 2);
+            $rss = fetch_feed($feed['url']);
+            remove_filter('http_request_args', array($this, 'custom_http_request_args'), 10);
+
+            if (!is_wp_error($rss)) {
+                $count = $rss->get_item_quantity(10);
+                $total_articles += $count;
+                $feed_article_counts[$feed_data['index']] = $count;
+                $this->log_message('Found ' . $count . ' articles in ' . $feed['name']);
+            }
+        }
+
+        if ($total_articles == 0) {
+            $this->log_message('No articles to process');
+            $this->clear_progress();
+            return array('success' => true, 'message' => 'No articles to process');
+        }
+
+        $articles_processed = 0;
 
         foreach ($feeds_to_process as $feed_data) {
             $index = $feed_data['index'];
             $feed = $feed_data['feed'];
-            $current_feed_num++;
 
-            // Update progress for this feed
-            $percent = floor(($current_feed_num / $total_feeds) * 100);
-            $this->update_progress(array(
-                'percent' => $percent,
-                'current' => $current_feed_num,
-                'total' => $total_feeds,
-                'status' => 'Processing ' . esc_html($feed['name']) . '...'
-            ));
+            $this->log_message('Processing feed: ' . $feed['name']);
 
             // Set custom User-Agent to avoid being blocked
             add_filter('http_request_args', array($this, 'custom_http_request_args'), 10, 2);
@@ -1021,9 +1102,21 @@ class EnviroLink_AI_Aggregator {
             
             foreach ($items as $item) {
                 $total_processed++;
-                
+                $articles_processed++;
+
+                // Update progress
+                $percent = floor(($articles_processed / $total_articles) * 100);
+                $this->update_progress(array(
+                    'percent' => $percent,
+                    'current' => $articles_processed,
+                    'total' => $total_articles,
+                    'status' => 'Processing ' . esc_html($feed['name']) . ' (' . $articles_processed . '/' . $total_articles . ')'
+                ));
+
                 // Check if article already exists
                 $original_link = $item->get_permalink();
+                $original_title = $item->get_title();
+
                 $existing = get_posts(array(
                     'post_type' => 'post',
                     'meta_key' => 'envirolink_source_url',
@@ -1039,14 +1132,17 @@ class EnviroLink_AI_Aggregator {
                         // Update mode: we'll update this post
                         $is_update = true;
                         $existing_post_id = $existing[0]->ID;
+                        $this->log_message('Checking: ' . $original_title . ' (exists, checking for changes)');
                     } else {
                         // Skip mode: skip this article
+                        $this->log_message('Skipped: ' . $original_title . ' (already exists)');
                         continue;
                     }
+                } else {
+                    $this->log_message('Processing: ' . $original_title);
                 }
 
                 // Get original content
-                $original_title = $item->get_title();
                 $original_description = $item->get_description();
                 $original_content = $item->get_content();
 
@@ -1062,8 +1158,13 @@ class EnviroLink_AI_Aggregator {
                     if ($existing_hash === $content_hash) {
                         // Content hasn't changed - skip AI processing to save time and money
                         $total_skipped++;
+                        $this->log_message('→ No changes detected, skipped AI processing');
                         continue;
+                    } else {
+                        $this->log_message('→ Changes detected, sending to AI...');
                     }
+                } else {
+                    $this->log_message('→ Sending to AI...');
                 }
 
                 // Rewrite using AI
@@ -1094,6 +1195,7 @@ class EnviroLink_AI_Aggregator {
                     $post_id = wp_update_post($post_data);
 
                     if ($post_id) {
+                        $this->log_message('→ Updated post successfully');
                         // Update metadata
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
@@ -1154,6 +1256,7 @@ class EnviroLink_AI_Aggregator {
                     $post_id = wp_insert_post($post_data);
 
                     if ($post_id) {
+                        $this->log_message('→ Created new post successfully');
                         // Store metadata
                         update_post_meta($post_id, 'envirolink_source_url', $original_link);
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
