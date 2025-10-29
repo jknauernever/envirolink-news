@@ -1083,7 +1083,7 @@ class EnviroLink_AI_Aggregator {
         if ($enclosure && $enclosure->get_link()) {
             $link = $enclosure->get_link();
             // Check if it's an image
-            if (preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $link)) {
+            if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $link)) {
                 return $link;
             }
         }
@@ -1091,16 +1091,30 @@ class EnviroLink_AI_Aggregator {
         // Try to extract first image from content
         $content = $item->get_content();
         if ($content) {
-            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $content, $matches)) {
-                return $matches[1];
+            // Look for img tags and extract src attribute
+            // Handle both quoted and unquoted attributes, and query parameters
+            if (preg_match('/<img[^>]+src=(["\']?)([^"\'>\s]+)\1[^>]*>/i', $content, $matches)) {
+                $image_url = $matches[2];
+                // Decode HTML entities (like &amp;)
+                $image_url = html_entity_decode($image_url, ENT_QUOTES | ENT_HTML5);
+                // Verify it looks like an image URL
+                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url) ||
+                    strpos($image_url, 'grist.org') !== false) {
+                    return $image_url;
+                }
             }
         }
 
         // Try description
         $description = $item->get_description();
         if ($description) {
-            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $description, $matches)) {
-                return $matches[1];
+            if (preg_match('/<img[^>]+src=(["\']?)([^"\'>\s]+)\1[^>]*>/i', $description, $matches)) {
+                $image_url = $matches[2];
+                $image_url = html_entity_decode($image_url, ENT_QUOTES | ENT_HTML5);
+                if (preg_match('/\.(jpg|jpeg|png|gif|webp)($|\?)/i', $image_url) ||
+                    strpos($image_url, 'grist.org') !== false) {
+                    return $image_url;
+                }
             }
         }
 
