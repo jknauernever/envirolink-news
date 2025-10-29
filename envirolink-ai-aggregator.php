@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.9.4
+ * Version: 1.10.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.9.4');
+define('ENVIROLINK_VERSION', '1.10.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -50,6 +50,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_get_progress', array($this, 'ajax_get_progress'));
         add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
         add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
+        add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
     }
     
     /**
@@ -268,6 +269,7 @@ class EnviroLink_AI_Aggregator {
 
                     <p>
                         <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
+                        <button type="button" class="button" id="fix-dates-btn" style="margin-left: 10px; background-color: #ff9800; color: white; border-color: #f57c00;" title="Sync all post dates to match RSS publication dates">Fix Post Order</button>
                         <span id="run-now-status" style="margin-left: 10px;"></span>
                     </p>
 
@@ -909,6 +911,44 @@ class EnviroLink_AI_Aggregator {
                     }, 100);
                 }
             });
+
+            // Fix post dates button
+            $('#fix-dates-btn').click(function() {
+                if (!confirm('This will sync all post dates to match their RSS publication dates.\n\nThis will fix the post ordering on your homepage.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_fix_post_dates' },
+                    success: function(response) {
+                        stopProgressPolling();
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                            // Show reload prompt
+                            if (confirm(response.data.message + '\n\nReload the page to see the new order?')) {
+                                location.reload();
+                            }
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false);
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        status.html('<span style="color: red;">✗ Error occurred</span>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
         });
         </script>
         
@@ -1048,6 +1088,30 @@ class EnviroLink_AI_Aggregator {
 
         $saved_log = get_option('envirolink_last_run_log', array());
         wp_send_json_success(array('log' => $saved_log));
+    }
+
+    /**
+     * AJAX: Fix post dates to match RSS publication dates
+     */
+    public function ajax_fix_post_dates() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->fix_post_dates();
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
     }
 
     /**
@@ -1265,6 +1329,108 @@ class EnviroLink_AI_Aggregator {
         $message = "Updated $updated_count images";
         if ($skipped_count > 0) $message .= ", skipped $skipped_count";
         if ($failed_count > 0) $message .= ", failed $failed_count";
+
+        $this->log_message('Complete: ' . $message);
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
+    }
+
+    /**
+     * Fix post dates to match RSS publication dates
+     * Syncs all EnviroLink posts' post_date to their stored envirolink_pubdate metadata
+     */
+    private function fix_post_dates() {
+        $this->log_message('Starting post date synchronization...');
+
+        // Get all EnviroLink posts
+        $args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        );
+
+        $posts = get_posts($args);
+        $total_posts = count($posts);
+
+        if ($total_posts == 0) {
+            $this->log_message('No EnviroLink posts found');
+            return array('success' => true, 'message' => 'No posts to update');
+        }
+
+        $this->log_message('Found ' . $total_posts . ' posts to check');
+
+        $fixed_count = 0;
+        $skipped_count = 0;
+        $error_count = 0;
+
+        foreach ($posts as $index => $post) {
+            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $index + 1,
+                'total' => $total_posts,
+                'status' => 'Syncing post dates...'
+            ));
+
+            $this->log_message('Checking: ' . $post->post_title);
+
+            // Get stored RSS publication date
+            $rss_pubdate = get_post_meta($post->ID, 'envirolink_pubdate', true);
+
+            if (empty($rss_pubdate)) {
+                $this->log_message('  → No RSS pubdate stored, skipping');
+                $skipped_count++;
+                continue;
+            }
+
+            // Parse dates for comparison (compare just the date part, not time)
+            $current_post_date = get_the_date('Y-m-d', $post->ID);
+            $rss_date = date('Y-m-d', strtotime($rss_pubdate));
+
+            if ($current_post_date === $rss_date) {
+                $this->log_message('  → Already correct (' . $current_post_date . ')');
+                $skipped_count++;
+                continue;
+            }
+
+            // Need to fix the date
+            $this->log_message('  → Fixing: ' . $current_post_date . ' → ' . $rss_date);
+
+            // Convert RSS pubdate to WordPress format
+            $timestamp = strtotime($rss_pubdate);
+            if ($timestamp === false) {
+                $this->log_message('  → ✗ Invalid date format');
+                $error_count++;
+                continue;
+            }
+
+            $new_post_date = date('Y-m-d H:i:s', $timestamp);
+            $new_post_date_gmt = get_gmt_from_date($new_post_date);
+
+            // Update the post
+            $result = wp_update_post(array(
+                'ID' => $post->ID,
+                'post_date' => $new_post_date,
+                'post_date_gmt' => $new_post_date_gmt
+            ), true);
+
+            if (is_wp_error($result)) {
+                $this->log_message('  → ✗ Error: ' . $result->get_error_message());
+                $error_count++;
+            } else {
+                $this->log_message('  → ✓ Fixed successfully');
+                $fixed_count++;
+            }
+        }
+
+        $message = "Fixed {$fixed_count} post dates";
+        if ($skipped_count > 0) $message .= ", skipped {$skipped_count} (already correct)";
+        if ($error_count > 0) $message .= ", {$error_count} errors";
 
         $this->log_message('Complete: ' . $message);
 
