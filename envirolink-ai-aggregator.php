@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.2.0');
+define('ENVIROLINK_VERSION', '1.2.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -765,12 +765,18 @@ class EnviroLink_AI_Aggregator {
             return;
         }
 
-        $result = $this->fetch_and_process_feeds(true); // Pass true for manual run
+        try {
+            $result = $this->fetch_and_process_feeds(true); // Pass true for manual run
 
-        if ($result['success']) {
-            wp_send_json_success(array('message' => $result['message']));
-        } else {
-            wp_send_json_error(array('message' => $result['message']));
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
         }
     }
 
@@ -790,12 +796,18 @@ class EnviroLink_AI_Aggregator {
             return;
         }
 
-        $result = $this->fetch_and_process_feeds(true, $feed_index); // Pass true for manual run and feed index
+        try {
+            $result = $this->fetch_and_process_feeds(true, $feed_index); // Pass true for manual run and feed index
 
-        if ($result['success']) {
-            wp_send_json_success(array('message' => $result['message']));
-        } else {
-            wp_send_json_error(array('message' => $result['message']));
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
         }
     }
     
