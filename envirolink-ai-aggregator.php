@@ -988,9 +988,12 @@ class EnviroLink_AI_Aggregator {
 
                     // Use original RSS publication date if available
                     if (!empty($original_pubdate)) {
-                        $pub_date = date('Y-m-d H:i:s', strtotime($original_pubdate));
-                        $post_data['post_date'] = $pub_date;
-                        $post_data['post_date_gmt'] = get_gmt_from_date($pub_date);
+                        $timestamp = strtotime($original_pubdate);
+                        if ($timestamp !== false) {
+                            $pub_date = date('Y-m-d H:i:s', $timestamp);
+                            $post_data['post_date'] = $pub_date;
+                            $post_data['post_date_gmt'] = get_gmt_from_date($pub_date);
+                        }
                     }
 
                     if ($post_category) {
