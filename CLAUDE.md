@@ -229,6 +229,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.11.0** (2025-10-29) - Add "Randomize Daily Order" setting to prevent source clustering
+- New checkbox in Settings: "Randomize order of posts within the same day"
+- Prevents posts from same day being grouped by source (all Guardian, then all Mongabay, etc.)
+- Modifies WordPress ORDER BY: `DATE(post_date) DESC, RAND()`
+- Keeps newest days first, but randomizes within each day
+- Does not modify post timestamps in database
+- Only affects frontend main query (not admin, RSS, sitemaps)
+
 **v1.10.2** (2025-10-29) - Fix BBC image enhancement to support all URL patterns
 - v1.10.1 only handled 2 of 4 BBC URL patterns, causing "couldn't parse width pattern" errors
 - Added support for `/ace/standard/WIDTH/` pattern
@@ -398,9 +406,21 @@ Posts are created with author ID 1 (hardcoded). This assumes user 1 exists in th
 - "Update existing" mode compares content hash to avoid unnecessary AI calls
 
 ### Post Ordering Issues
+
+**Incorrect Dates:**
 - WordPress orders posts by `post_date` by default
 - Plugin sets `post_date` from RSS `pubDate` field when creating new posts
 - If RSS doesn't provide pubdate, or older posts were created before this feature, posts may have incorrect dates
 - **Solution**: Use the orange "Fix Post Order" button in admin to sync all post dates
 - The fix_post_dates() method compares WordPress post_date with stored envirolink_pubdate metadata
 - Only updates posts where dates don't match (skips already-correct posts)
+
+**Source Clustering (v1.11.0):**
+- Posts from the same feed processed together have similar timestamps
+- This causes clustering by source (all Guardian posts together, then all Mongabay, etc.)
+- **Solution**: Enable "Randomize Daily Order" checkbox in Settings
+- Modifies WordPress query to: `ORDER BY DATE(post_date) DESC, RAND()`
+- Keeps newest days first, but randomizes posts within each day
+- Does not modify timestamps in database
+- Only affects frontend display (not admin, RSS feeds, sitemaps)
+- Implemented via `posts_orderby` filter in randomize_daily_order() method (line ~127)
