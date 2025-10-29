@@ -229,11 +229,15 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.10.1** (2025-10-29) - Add BBC image quality enhancement
-- BBC images were downloading at tiny sizes (240px, 320px thumbnails)
-- Detects ichef.bbci.co.uk URLs and upgrades width in path to 1024px (maximum)
-- Similar to Guardian logic but simpler (width in path vs query parameters)
-- Does not affect other feeds
+**v1.10.2** (2025-10-29) - Fix BBC image enhancement to support all URL patterns
+- v1.10.1 only handled 2 of 4 BBC URL patterns, causing "couldn't parse width pattern" errors
+- Added support for `/ace/standard/WIDTH/` pattern
+- Added support for `/images/ic/WIDTHxHEIGHT/` pattern (maintains aspect ratio)
+- All 4 BBC CDN patterns now working: `/news/`, `/ace/standard/`, `/ace/ws/`, `/images/ic/`
+
+**v1.10.1** (2025-10-29) - Add BBC image quality enhancement (INCOMPLETE)
+- Initial BBC image enhancement added but only handled 2 of 4 URL patterns
+- Fixed in v1.10.2
 
 **v1.10.0** (2025-10-29) - Add "Fix Post Order" button for date synchronization
 - Orange button in admin panel syncs all post dates to match RSS publication dates
@@ -282,11 +286,14 @@ The plugin implements sophisticated image extraction with multiple fallback stra
     - Avoids "Unauthorized" errors from modifying signed URLs
   - **Unsigned + Small Width**: Safe to enhance, extracts master dimensions and upgrades to 1920px
   - **Unsigned + Any Width**: Safe to enhance quality parameters
-- **BBC Images**: Detects BBC CDN URLs (`ichef.bbci.co.uk`) and upgrades width in path (v1.10.1)
-  - BBC format: `/news/WIDTH/` or `/ace/ws/WIDTH/` where WIDTH is 240, 320, 480, 640, 800, 976, or 1024
+- **BBC Images**: Detects BBC CDN URLs (`ichef.bbci.co.uk`) and upgrades width in path (v1.10.2)
+  - **Four URL patterns supported:**
+    1. `/news/WIDTH/` → `/news/1024/`
+    2. `/ace/standard/WIDTH/` → `/ace/standard/1024/`
+    3. `/ace/ws/WIDTH/` → `/ace/ws/1024/`
+    4. `/images/ic/WIDTHxHEIGHT/` → `/images/ic/1024x[calculated]/` (maintains aspect ratio)
   - Replaces any width < 1024 with 1024 (BBC's maximum resolution)
   - Simpler than Guardian - no authentication, width is in URL path not query params
-  - Example: `/news/240/` → `/news/1024/`
 - **Generic URLs**: Attempts to upgrade width/quality query parameters
 - See `enhance_image_quality()` method (line ~2005)
 
