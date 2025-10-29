@@ -46,6 +46,7 @@ class EnviroLink_AI_Aggregator {
         
         // AJAX handlers
         add_action('wp_ajax_envirolink_run_now', array($this, 'ajax_run_now'));
+        add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
     }
     
     /**
@@ -233,38 +234,80 @@ class EnviroLink_AI_Aggregator {
         ?>
         <div class="wrap">
             <h1>EnviroLink AI News Aggregator</h1>
-            
-            <div class="card" style="max-width: 800px;">
-                <h2>System Status</h2>
-                <table class="form-table">
-                    <tr>
-                        <th>Last Run:</th>
-                        <td><?php echo $last_run ? date('Y-m-d H:i:s', strtotime($last_run)) : 'Never'; ?></td>
-                    </tr>
-                    <tr>
-                        <th>Next Scheduled Run:</th>
-                        <td><?php echo $next_run ? date('Y-m-d H:i:s', $next_run) : 'Not scheduled'; ?></td>
-                    </tr>
-                    <tr>
-                        <th>API Key Status:</th>
-                        <td>
-                            <?php if (!empty($api_key)): ?>
-                                <span style="color: green;">✓ Configured</span>
-                            <?php else: ?>
-                                <span style="color: red;">✗ Not configured</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Active Feeds:</th>
-                        <td><?php echo count(array_filter($feeds, function($f) { return $f['enabled']; })); ?></td>
-                    </tr>
-                </table>
-                
-                <p>
-                    <button type="button" class="button button-primary" id="run-now-btn">Run Aggregator Now</button>
-                    <span id="run-now-status" style="margin-left: 10px;"></span>
-                </p>
+
+            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                <div class="card" style="flex: 1; max-width: 500px;">
+                    <h2>System Status</h2>
+                    <table class="form-table">
+                        <tr>
+                            <th>Last Run:</th>
+                            <td><?php echo $last_run ? date('Y-m-d H:i:s', strtotime($last_run)) : 'Never'; ?></td>
+                        </tr>
+                        <tr>
+                            <th>Next Scheduled Run:</th>
+                            <td><?php echo $next_run ? date('Y-m-d H:i:s', $next_run) : 'Not scheduled'; ?></td>
+                        </tr>
+                        <tr>
+                            <th>API Key Status:</th>
+                            <td>
+                                <?php if (!empty($api_key)): ?>
+                                    <span style="color: green;">✓ Configured</span>
+                                <?php else: ?>
+                                    <span style="color: red;">✗ Not configured</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Active Feeds:</th>
+                            <td><?php echo count(array_filter($feeds, function($f) { return $f['enabled']; })); ?></td>
+                        </tr>
+                    </table>
+
+                    <p>
+                        <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
+                        <span id="run-now-status" style="margin-left: 10px;"></span>
+                    </p>
+                </div>
+
+                <div class="card" style="flex: 1; max-width: 400px;">
+                    <h2>Quick Actions</h2>
+                    <?php if (empty($feeds)): ?>
+                        <p style="color: #666;">No feeds configured yet.</p>
+                    <?php else: ?>
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            <?php foreach ($feeds as $index => $feed): ?>
+                                <div style="padding: 10px; border-bottom: 1px solid #ddd; display: flex; align-items: center; justify-content: space-between;">
+                                    <div style="flex: 1;">
+                                        <strong><?php echo esc_html($feed['name']); ?></strong>
+                                        <?php if (!$feed['enabled']): ?>
+                                            <span style="color: #999; font-size: 11px;">(disabled)</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button type="button" class="button button-small edit-schedule-btn"
+                                                data-index="<?php echo $index; ?>"
+                                                data-schedule-type="<?php echo esc_attr(isset($feed['schedule_type']) ? $feed['schedule_type'] : 'hourly'); ?>"
+                                                data-schedule-times="<?php echo esc_attr(isset($feed['schedule_times']) ? $feed['schedule_times'] : 1); ?>"
+                                                data-include-author="<?php echo (isset($feed['include_author']) && $feed['include_author']) ? '1' : '0'; ?>"
+                                                data-include-pubdate="<?php echo (isset($feed['include_pubdate']) && $feed['include_pubdate']) ? '1' : '0'; ?>"
+                                                data-include-topic-tags="<?php echo (isset($feed['include_topic_tags']) && $feed['include_topic_tags']) ? '1' : '0'; ?>"
+                                                data-include-locations="<?php echo (isset($feed['include_locations']) && $feed['include_locations']) ? '1' : '0'; ?>"
+                                                title="Edit feed settings">
+                                            <span class="dashicons dashicons-edit" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                        </button>
+                                        <button type="button" class="button button-small button-primary run-feed-btn"
+                                                data-index="<?php echo $index; ?>"
+                                                data-name="<?php echo esc_attr($feed['name']); ?>"
+                                                title="Update this feed now"
+                                                <?php echo !$feed['enabled'] ? 'disabled' : ''; ?>>
+                                            <span class="dashicons dashicons-update" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </div>
             
             <h2 class="nav-tab-wrapper">
@@ -587,14 +630,14 @@ class EnviroLink_AI_Aggregator {
                 $($(this).attr('href') + '-tab').show();
             });
             
-            // Run now button
+            // Run now button (all feeds)
             $('#run-now-btn').click(function() {
                 var btn = $(this);
                 var status = $('#run-now-status');
-                
+
                 btn.prop('disabled', true);
                 status.html('<span style="color: blue;">Running...</span>');
-                
+
                 $.ajax({
                     url: ajaxurl,
                     type: 'POST',
@@ -612,6 +655,48 @@ class EnviroLink_AI_Aggregator {
                     error: function() {
                         status.html('<span style="color: red;">✗ Error occurred</span>');
                         btn.prop('disabled', false);
+                    }
+                });
+            });
+
+            // Run single feed button
+            $('.run-feed-btn').click(function() {
+                var btn = $(this);
+                var feedIndex = btn.data('index');
+                var feedName = btn.data('name');
+                var icon = btn.find('.dashicons');
+
+                btn.prop('disabled', true);
+                icon.addClass('dashicons-update-spin');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'envirolink_run_feed',
+                        feed_index: feedIndex
+                    },
+                    success: function(response) {
+                        icon.removeClass('dashicons-update-spin');
+                        if (response.success) {
+                            // Show success feedback
+                            btn.css('background-color', '#46b450');
+                            setTimeout(function() {
+                                btn.css('background-color', '');
+                                btn.prop('disabled', false);
+                            }, 2000);
+
+                            // Update the main status display
+                            $('#run-now-status').html('<span style="color: green;">✓ ' + feedName + ': ' + response.data.message + '</span>');
+                        } else {
+                            btn.prop('disabled', false);
+                            $('#run-now-status').html('<span style="color: red;">✗ ' + feedName + ': ' + response.data.message + '</span>');
+                        }
+                    },
+                    error: function() {
+                        icon.removeClass('dashicons-update-spin');
+                        btn.prop('disabled', false);
+                        $('#run-now-status').html('<span style="color: red;">✗ Error updating ' + feedName + '</span>');
                     }
                 });
             });
@@ -657,6 +742,16 @@ class EnviroLink_AI_Aggregator {
             border: 1px solid #ccc;
             border-top: none;
         }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .dashicons-update-spin {
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
         </style>
         <?php
     }
@@ -671,7 +766,32 @@ class EnviroLink_AI_Aggregator {
         }
 
         $result = $this->fetch_and_process_feeds(true); // Pass true for manual run
-        
+
+        if ($result['success']) {
+            wp_send_json_success(array('message' => $result['message']));
+        } else {
+            wp_send_json_error(array('message' => $result['message']));
+        }
+    }
+
+    /**
+     * AJAX: Run aggregator for a single feed
+     */
+    public function ajax_run_feed() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $feed_index = isset($_POST['feed_index']) ? intval($_POST['feed_index']) : -1;
+
+        if ($feed_index < 0) {
+            wp_send_json_error(array('message' => 'Invalid feed index'));
+            return;
+        }
+
+        $result = $this->fetch_and_process_feeds(true, $feed_index); // Pass true for manual run and feed index
+
         if ($result['success']) {
             wp_send_json_success(array('message' => $result['message']));
         } else {
@@ -720,8 +840,9 @@ class EnviroLink_AI_Aggregator {
     /**
      * Main function: Fetch and process feeds
      * @param bool $manual_run Whether this is a manual run (bypasses schedule checks)
+     * @param int $specific_feed_index Process only this feed (null = all feeds)
      */
-    public function fetch_and_process_feeds($manual_run = false) {
+    public function fetch_and_process_feeds($manual_run = false, $specific_feed_index = null) {
         $api_key = get_option('envirolink_api_key');
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
@@ -737,6 +858,11 @@ class EnviroLink_AI_Aggregator {
         $total_updated = 0;
 
         foreach ($feeds as $index => $feed) {
+            // If specific feed requested, skip all others
+            if ($specific_feed_index !== null && $index !== $specific_feed_index) {
+                continue;
+            }
+
             if (!$feed['enabled']) {
                 continue;
             }
@@ -848,13 +974,17 @@ class EnviroLink_AI_Aggregator {
                         $total_updated++;
                     }
                 } else {
-                    // Create new post
+                    // Create new post with randomized time within today
+                    $random_time = $this->get_random_time_today();
+
                     $post_data = array(
                         'post_title' => $rewritten['title'],
                         'post_content' => $rewritten['content'],
                         'post_status' => $post_status,
                         'post_type' => 'post',
-                        'post_author' => 1
+                        'post_author' => 1,
+                        'post_date' => $random_time,
+                        'post_date_gmt' => get_gmt_from_date($random_time)
                     );
 
                     if ($post_category) {
@@ -922,6 +1052,20 @@ class EnviroLink_AI_Aggregator {
         );
     }
     
+    /**
+     * Generate a random datetime within today (00:00:00 to 23:59:59)
+     */
+    private function get_random_time_today() {
+        $today_start = strtotime('today 00:00:00');
+        $today_end = strtotime('today 23:59:59');
+
+        // Generate random timestamp within today
+        $random_timestamp = rand($today_start, $today_end);
+
+        // Format as MySQL datetime
+        return date('Y-m-d H:i:s', $random_timestamp);
+    }
+
     /**
      * Extract and download image from RSS feed item
      */
