@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.5.1
+ * Version: 1.6.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.5.1');
+define('ENVIROLINK_VERSION', '1.6.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1177,6 +1177,12 @@ class EnviroLink_AI_Aggregator {
                 // Extract image from feed
                 $image_url = $this->extract_feed_image($item);
 
+                // If no image in RSS feed, try fetching from article page
+                if (!$image_url && !empty($original_link)) {
+                    $this->log_message('  → No image in RSS, fetching from article page...');
+                    $image_url = $this->extract_image_from_url($original_link);
+                }
+
                 // Extract publication date (always needed for post_date)
                 $original_pubdate = $item->get_date('c'); // Get in ISO 8601 format
 
@@ -1434,6 +1440,88 @@ class EnviroLink_AI_Aggregator {
         }
 
         $this->log_message('  → No image found (tried: enclosure, media tags, content, description)');
+        return null;
+    }
+
+    /**
+     * Extract image from article URL by fetching the page
+     * Looks for Open Graph, Twitter Card, and other meta images
+     */
+    private function extract_image_from_url($url) {
+        // Fetch the article page
+        $response = wp_remote_get($url, array(
+            'timeout' => 10,
+            'user-agent' => 'EnviroLink News Aggregator/1.5 (+https://envirolink.org; WordPress/' . get_bloginfo('version') . ')',
+            'headers' => array(
+                'Accept' => 'text/html'
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            $this->log_message('    ✗ Failed to fetch article page: ' . $response->get_error_message());
+            return null;
+        }
+
+        $html = wp_remote_retrieve_body($response);
+        if (empty($html)) {
+            return null;
+        }
+
+        // Strategy 1: Open Graph image (og:image)
+        if (preg_match('/<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']/i', $html, $matches)) {
+            $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+            if ($this->is_valid_image_url($img_url)) {
+                $this->log_message('    ✓ Found via Open Graph (og:image)');
+                return $img_url;
+            }
+        }
+
+        // Also try reversed attribute order
+        if (preg_match('/<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']/i', $html, $matches)) {
+            $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+            if ($this->is_valid_image_url($img_url)) {
+                $this->log_message('    ✓ Found via Open Graph (og:image)');
+                return $img_url;
+            }
+        }
+
+        // Strategy 2: Twitter Card image
+        if (preg_match('/<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']/i', $html, $matches)) {
+            $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+            if ($this->is_valid_image_url($img_url)) {
+                $this->log_message('    ✓ Found via Twitter Card');
+                return $img_url;
+            }
+        }
+
+        // Also try reversed attribute order
+        if (preg_match('/<meta\s+content=["\']([^"\']+)["\']\s+name=["\']twitter:image["\']/i', $html, $matches)) {
+            $img_url = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
+            if ($this->is_valid_image_url($img_url)) {
+                $this->log_message('    ✓ Found via Twitter Card');
+                return $img_url;
+            }
+        }
+
+        // Strategy 3: Look for first large image in article
+        // Find all img tags and get the first one that looks substantial
+        if (preg_match_all('/<img[^>]+src=["\']([^"\']+)["\'][^>]*>/i', $html, $matches)) {
+            foreach ($matches[1] as $img_url) {
+                $img_url = html_entity_decode($img_url, ENT_QUOTES | ENT_HTML5);
+
+                // Skip small images (icons, logos, social media buttons)
+                if (preg_match('/(icon|logo|avatar|social|button|share|pixel|1x1)/i', $img_url)) {
+                    continue;
+                }
+
+                if ($this->is_valid_image_url($img_url)) {
+                    $this->log_message('    ✓ Found first substantial image in article');
+                    return $img_url;
+                }
+            }
+        }
+
+        $this->log_message('    ✗ No images found on article page');
         return null;
     }
 
