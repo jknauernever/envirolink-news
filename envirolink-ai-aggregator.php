@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.8.3
+ * Version: 1.8.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.8.3');
+define('ENVIROLINK_VERSION', '1.8.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1837,6 +1837,15 @@ class EnviroLink_AI_Aggregator {
                 parse_str($parsed['query'], $query_params);
             }
 
+            // Check if URL has a signature parameter ('s')
+            // If it does, modifying parameters will invalidate the signature
+            // So we should use the URL as-is (RSS feed already provides good quality)
+            if (isset($query_params['s'])) {
+                $this->log_message('    → Guardian URL has signature, using as-is to preserve authentication');
+                return $img_url;
+            }
+
+            // No signature - safe to enhance parameters
             // Set high quality parameters
             $query_params['width'] = 1920;  // High resolution width
             $query_params['quality'] = 85;   // High quality (Guardian max is typically 85)
