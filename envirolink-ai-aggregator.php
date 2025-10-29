@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.2.1
+ * Version: 1.2.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.2.1');
+define('ENVIROLINK_VERSION', '1.2.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -868,6 +868,7 @@ class EnviroLink_AI_Aggregator {
         $total_processed = 0;
         $total_created = 0;
         $total_updated = 0;
+        $failed_feeds = array();
 
         foreach ($feeds as $index => $feed) {
             // If specific feed requested, skip all others
@@ -883,11 +884,18 @@ class EnviroLink_AI_Aggregator {
             if (!$manual_run && !$this->is_feed_due($feed)) {
                 continue;
             }
-            
+
+            // Set custom User-Agent to avoid being blocked
+            add_filter('http_headers_useragent', array($this, 'custom_user_agent'));
+
             // Fetch RSS feed
             $rss = fetch_feed($feed['url']);
-            
+
+            // Remove filter after fetch
+            remove_filter('http_headers_useragent', array($this, 'custom_user_agent'));
+
             if (is_wp_error($rss)) {
+                $failed_feeds[] = $feed['name'] . ' (' . $rss->get_error_message() . ')';
                 continue;
             }
             
@@ -1066,13 +1074,24 @@ class EnviroLink_AI_Aggregator {
         if ($total_updated > 0) {
             $message .= ", updated {$total_updated} existing posts";
         }
+        if (!empty($failed_feeds)) {
+            $message .= ". Warning: Failed to fetch " . count($failed_feeds) . " feed(s): " . implode('; ', $failed_feeds);
+        }
 
         return array(
             'success' => true,
             'message' => $message
         );
     }
-    
+
+    /**
+     * Custom User-Agent for RSS feed requests
+     * Helps avoid being blocked by feed providers
+     */
+    public function custom_user_agent($user_agent) {
+        return 'EnviroLink News Aggregator/1.2 (+https://envirolink.org; WordPress/' . get_bloginfo('version') . ')';
+    }
+
     /**
      * Extract and download image from RSS feed item
      */
