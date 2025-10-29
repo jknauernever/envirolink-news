@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.8.2
+ * Version: 1.8.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.8.2');
+define('ENVIROLINK_VERSION', '1.8.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1958,15 +1958,21 @@ class EnviroLink_AI_Aggregator {
      */
     private function set_featured_image_from_url($image_url, $post_id) {
         if (empty($image_url)) {
+            $this->log_message('    ✗ Image URL is empty');
             return false;
         }
+
+        $this->log_message('    → Downloading image from: ' . $image_url);
 
         // Download image
         $tmp = download_url($image_url);
 
         if (is_wp_error($tmp)) {
+            $this->log_message('    ✗ Failed to download image: ' . $tmp->get_error_message());
             return false;
         }
+
+        $this->log_message('    → Downloaded to temp file: ' . $tmp);
 
         // Parse URL to get clean filename without query parameters
         // This fixes issues with URLs like "image.jpg?quality=75&strip=all"
@@ -1978,6 +1984,8 @@ class EnviroLink_AI_Aggregator {
         if (empty($clean_filename)) {
             $clean_filename = 'image-' . time() . '.jpg';
         }
+
+        $this->log_message('    → Using filename: ' . $clean_filename);
 
         // Get file info with clean filename (no query parameters)
         $file_array = array(
@@ -1992,13 +2000,22 @@ class EnviroLink_AI_Aggregator {
         @unlink($tmp);
 
         if (is_wp_error($attachment_id)) {
+            $this->log_message('    ✗ Failed to upload to media library: ' . $attachment_id->get_error_message());
             return false;
         }
 
-        // Set as featured image
-        set_post_thumbnail($post_id, $attachment_id);
+        $this->log_message('    → Uploaded to media library (ID: ' . $attachment_id . ')');
 
-        return true;
+        // Set as featured image
+        $result = set_post_thumbnail($post_id, $attachment_id);
+
+        if ($result) {
+            $this->log_message('    ✓ Set as featured image successfully');
+        } else {
+            $this->log_message('    ✗ Failed to set as featured image (set_post_thumbnail returned false)');
+        }
+
+        return $result;
     }
 
     /**
