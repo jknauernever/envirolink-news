@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.1.1
+ * Version: 1.2.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.1.1');
+define('ENVIROLINK_VERSION', '1.2.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -926,6 +926,9 @@ class EnviroLink_AI_Aggregator {
                 // Extract image from feed
                 $image_url = $this->extract_feed_image($item);
 
+                // Extract publication date (always needed for post_date)
+                $original_pubdate = $item->get_date('c'); // Get in ISO 8601 format
+
                 // Extract metadata from feed
                 $feed_metadata = $this->extract_feed_metadata($item, $feed);
 
@@ -974,18 +977,21 @@ class EnviroLink_AI_Aggregator {
                         $total_updated++;
                     }
                 } else {
-                    // Create new post with randomized time within today
-                    $random_time = $this->get_random_time_today();
-
+                    // Create new post using original publication date
                     $post_data = array(
                         'post_title' => $rewritten['title'],
                         'post_content' => $rewritten['content'],
                         'post_status' => $post_status,
                         'post_type' => 'post',
-                        'post_author' => 1,
-                        'post_date' => $random_time,
-                        'post_date_gmt' => get_gmt_from_date($random_time)
+                        'post_author' => 1
                     );
+
+                    // Use original RSS publication date if available
+                    if (!empty($original_pubdate)) {
+                        $pub_date = date('Y-m-d H:i:s', strtotime($original_pubdate));
+                        $post_data['post_date'] = $pub_date;
+                        $post_data['post_date_gmt'] = get_gmt_from_date($pub_date);
+                    }
 
                     if ($post_category) {
                         $post_data['post_category'] = array($post_category);
@@ -1052,25 +1058,6 @@ class EnviroLink_AI_Aggregator {
         );
     }
     
-    /**
-     * Generate a random datetime within today (00:00:00 to 23:59:59)
-     * Uses WordPress timezone settings
-     */
-    private function get_random_time_today() {
-        // Get current date in WordPress timezone
-        $today = current_time('Y-m-d');
-
-        // Create timestamps for start and end of today
-        $today_start = strtotime($today . ' 00:00:00');
-        $today_end = strtotime($today . ' 23:59:59');
-
-        // Generate random timestamp within today
-        $random_timestamp = rand($today_start, $today_end);
-
-        // Format as MySQL datetime in local timezone
-        return date('Y-m-d H:i:s', $random_timestamp);
-    }
-
     /**
      * Extract and download image from RSS feed item
      */
