@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.10.0
+ * Version: 1.10.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.10.0');
+define('ENVIROLINK_VERSION', '1.10.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2074,6 +2074,46 @@ class EnviroLink_AI_Aggregator {
 
             $this->log_message('    → Enhanced Guardian image quality: width=1920, quality=85');
             return $enhanced_url;
+        }
+
+        // BBC images: Upgrade width in URL path
+        // BBC format: https://ichef.bbci.co.uk/news/[WIDTH]/cpsprodpb/...
+        // Widths: 240, 320, 480, 640, 800, 976, 1024 (max)
+        if (strpos($img_url, 'ichef.bbci.co.uk') !== false) {
+            $parsed = parse_url($img_url);
+
+            // Match the width in the path: /news/WIDTH/ or /ace/ws/WIDTH/
+            if (preg_match('#/(news|ace/ws)/(\d+)/#', $parsed['path'], $matches)) {
+                $current_width = intval($matches[2]);
+                $path_prefix = $matches[1]; // 'news' or 'ace/ws'
+
+                if ($current_width < 1024) {
+                    $this->log_message('    → BBC URL has width ' . $current_width . 'px, upgrading to 1024px');
+
+                    // Replace the width in the path with 1024
+                    $new_path = preg_replace(
+                        '#/(news|ace/ws)/\d+/#',
+                        '/' . $path_prefix . '/1024/',
+                        $parsed['path']
+                    );
+
+                    // Rebuild URL
+                    $enhanced_url = $parsed['scheme'] . '://' . $parsed['host'] . $new_path;
+                    if (isset($parsed['query'])) {
+                        $enhanced_url .= '?' . $parsed['query'];
+                    }
+
+                    $this->log_message('    → Enhanced BBC image to 1024px');
+                    return $enhanced_url;
+                } else {
+                    $this->log_message('    → BBC URL already at maximum width (' . $current_width . 'px)');
+                    return $img_url;
+                }
+            }
+
+            // If we couldn't parse the width, return as-is
+            $this->log_message('    → BBC URL detected but couldn\'t parse width pattern');
+            return $img_url;
         }
 
         // For other sites, check for common quality parameters
