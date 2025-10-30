@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.1
+ * Version: 1.11.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.1');
+define('ENVIROLINK_VERSION', '1.11.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -275,6 +275,22 @@ class EnviroLink_AI_Aggregator {
             }
         }
 
+        // Reschedule cron
+        if (isset($_GET['reschedule_cron'])) {
+            check_admin_referer('envirolink_reschedule_cron');
+
+            // Clear existing schedule
+            $timestamp = wp_next_scheduled('envirolink_fetch_feeds');
+            if ($timestamp) {
+                wp_unschedule_event($timestamp, 'envirolink_fetch_feeds');
+            }
+
+            // Reschedule for next hour
+            wp_schedule_event(time(), 'hourly', 'envirolink_fetch_feeds');
+
+            echo '<div class="notice notice-success"><p>Cron rescheduled successfully! Next run in approximately 1 hour.</p></div>';
+        }
+
         // Edit feed settings
         if (isset($_POST['envirolink_edit_feed'])) {
             check_admin_referer('envirolink_edit_feed');
@@ -315,7 +331,21 @@ class EnviroLink_AI_Aggregator {
                         </tr>
                         <tr>
                             <th>Next Scheduled Run:</th>
-                            <td><?php echo $next_run ? date('Y-m-d H:i:s', $next_run) : 'Not scheduled'; ?></td>
+                            <td>
+                                <?php
+                                if ($next_run) {
+                                    echo date('Y-m-d H:i:s', $next_run);
+                                    // Check if next run is in the past (cron is broken)
+                                    if ($next_run < time()) {
+                                        echo '<br><span style="color: red; font-weight: bold;">⚠️ Cron is broken (date is in the past)</span><br>';
+                                        echo '<a href="' . wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&reschedule_cron=1'), 'envirolink_reschedule_cron') . '" class="button button-small" style="margin-top: 5px;">Fix Cron Schedule</a>';
+                                    }
+                                } else {
+                                    echo '<span style="color: red;">Not scheduled</span><br>';
+                                    echo '<a href="' . wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&reschedule_cron=1'), 'envirolink_reschedule_cron') . '" class="button button-small" style="margin-top: 5px;">Schedule Cron</a>';
+                                }
+                                ?>
+                            </td>
                         </tr>
                         <tr>
                             <th>API Key Status:</th>
@@ -330,6 +360,19 @@ class EnviroLink_AI_Aggregator {
                         <tr>
                             <th>Active Feeds:</th>
                             <td><?php echo count(array_filter($feeds, function($f) { return $f['enabled']; })); ?></td>
+                        </tr>
+                        <tr>
+                            <th>WordPress Cron:</th>
+                            <td>
+                                <?php
+                                if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
+                                    echo '<span style="color: orange;">⚠️ Disabled (using system cron)</span>';
+                                    echo '<p class="description" style="margin-top: 5px;">WP-Cron is disabled. Make sure you have a system cron job set up to run wp-cron.php</p>';
+                                } else {
+                                    echo '<span style="color: green;">✓ Enabled</span>';
+                                }
+                                ?>
+                            </td>
                         </tr>
                     </table>
 
