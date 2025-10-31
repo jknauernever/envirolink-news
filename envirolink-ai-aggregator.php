@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.4
+ * Version: 1.11.5
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.4');
+define('ENVIROLINK_VERSION', '1.11.5');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -68,6 +68,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
         add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
         add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
+        add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -396,6 +397,7 @@ class EnviroLink_AI_Aggregator {
                     <p>
                         <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
                         <button type="button" class="button" id="fix-dates-btn" style="margin-left: 10px; background-color: #ff9800; color: white; border-color: #f57c00;" title="Sync all post dates to match RSS publication dates">Fix Post Order</button>
+                        <button type="button" class="button" id="cleanup-duplicates-btn" style="margin-left: 10px; background-color: #e91e63; color: white; border-color: #c2185b;" title="Find and delete duplicate articles (keeps newest version)">Clean Up Duplicates</button>
                         <span id="run-now-status" style="margin-left: 10px;"></span>
                     </p>
 
@@ -1089,6 +1091,46 @@ class EnviroLink_AI_Aggregator {
                     }
                 });
             });
+
+            // Cleanup duplicates button
+            $('#cleanup-duplicates-btn').click(function() {
+                if (!confirm('This will scan for duplicate articles and DELETE older versions.\n\nThe newest version of each duplicate will be kept.\n\nThis action CANNOT be undone!\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_cleanup_duplicates' },
+                    success: function(response) {
+                        stopProgressPolling();
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                            // Show reload prompt if duplicates were deleted
+                            if (response.data.message.indexOf('deleted') > -1) {
+                                if (confirm(response.data.message + '\n\nReload the page?')) {
+                                    location.reload();
+                                }
+                            }
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false);
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        status.html('<span style="color: red;">✗ Error occurred</span>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
         });
         </script>
         
@@ -1252,6 +1294,124 @@ class EnviroLink_AI_Aggregator {
         } catch (Error $e) {
             wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
         }
+    }
+
+    /**
+     * AJAX: Cleanup duplicate articles
+     */
+    public function ajax_cleanup_duplicates() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->cleanup_duplicates();
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * Cleanup duplicate articles
+     * Finds posts with identical titles and keeps only the most recent one
+     */
+    private function cleanup_duplicates() {
+        global $wpdb;
+
+        $this->clear_progress();
+        $this->update_progress(array(
+            'status' => 'running',
+            'message' => 'Scanning for duplicate articles...',
+            'percent' => 0
+        ));
+
+        // Get all EnviroLink posts
+        $args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        );
+
+        $posts = get_posts($args);
+        $total_posts = count($posts);
+
+        $this->log_message('Found ' . $total_posts . ' EnviroLink posts to check');
+
+        // Group posts by normalized title (lowercase, trimmed)
+        $title_groups = array();
+        foreach ($posts as $post) {
+            $normalized_title = strtolower(trim($post->post_title));
+            if (!isset($title_groups[$normalized_title])) {
+                $title_groups[$normalized_title] = array();
+            }
+            $title_groups[$normalized_title][] = $post;
+        }
+
+        // Find duplicates (groups with more than one post)
+        $duplicates_found = 0;
+        $deleted_count = 0;
+
+        foreach ($title_groups as $title => $group) {
+            if (count($group) > 1) {
+                $duplicates_found++;
+
+                // Sort by post date (newest first)
+                usort($group, function($a, $b) {
+                    return strtotime($b->post_date) - strtotime($a->post_date);
+                });
+
+                $keep = $group[0]; // Keep the newest post
+                $this->log_message('Found ' . count($group) . ' duplicates of: "' . $keep->post_title . '"');
+                $this->log_message('  → Keeping post ID ' . $keep->ID . ' (published ' . $keep->post_date . ')');
+
+                // Delete the rest
+                for ($i = 1; $i < count($group); $i++) {
+                    $delete = $group[$i];
+                    $this->log_message('  → Deleting duplicate ID ' . $delete->ID . ' (published ' . $delete->post_date . ')');
+
+                    // Permanently delete (bypass trash)
+                    $result = wp_delete_post($delete->ID, true);
+
+                    if ($result) {
+                        $deleted_count++;
+                    } else {
+                        $this->log_message('  ✗ Failed to delete post ID ' . $delete->ID);
+                    }
+                }
+            }
+        }
+
+        $this->update_progress(array(
+            'status' => 'complete',
+            'message' => 'Cleanup complete',
+            'percent' => 100
+        ));
+
+        if ($deleted_count > 0) {
+            $message = "Cleanup complete! Found {$duplicates_found} sets of duplicates and deleted {$deleted_count} duplicate posts.";
+            $this->log_message($message);
+        } else {
+            $message = "No duplicates found. All articles are unique!";
+            $this->log_message($message);
+        }
+
+        $this->clear_progress();
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
     }
 
     /**
