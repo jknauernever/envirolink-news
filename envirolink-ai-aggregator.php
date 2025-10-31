@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.5
+ * Version: 1.11.6
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.5');
+define('ENVIROLINK_VERSION', '1.11.6');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -475,8 +475,9 @@ class EnviroLink_AI_Aggregator {
             <h2 class="nav-tab-wrapper">
                 <a href="#settings" class="nav-tab nav-tab-active">Settings</a>
                 <a href="#feeds" class="nav-tab">RSS Feeds</a>
+                <a href="#articles" class="nav-tab">Articles</a>
             </h2>
-            
+
             <div id="settings-tab" class="tab-content">
                 <form method="post" action="">
                     <?php wp_nonce_field('envirolink_settings'); ?>
@@ -792,6 +793,111 @@ class EnviroLink_AI_Aggregator {
                         </form>
                     </div>
                 </div>
+            </div>
+
+            <div id="articles-tab" class="tab-content" style="display: none;">
+                <?php
+                // Get search query
+                $search_query = isset($_GET['article_search']) ? sanitize_text_field($_GET['article_search']) : '';
+
+                // Query all EnviroLink posts
+                $args = array(
+                    'post_type' => 'post',
+                    'posts_per_page' => -1,
+                    'meta_key' => 'envirolink_source_url',
+                    'meta_compare' => 'EXISTS',
+                    'post_status' => array('publish', 'draft', 'pending', 'private')
+                );
+
+                // Add search if provided
+                if (!empty($search_query)) {
+                    $args['s'] = $search_query;
+                }
+
+                // Apply same ordering as frontend
+                if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
+                    $args['orderby'] = 'date';
+                    $args['order'] = 'DESC';
+                    // Note: Random ordering within same day is handled by frontend filter
+                } else {
+                    $args['orderby'] = 'date';
+                    $args['order'] = 'DESC';
+                }
+
+                $articles = get_posts($args);
+                $total_count = count($articles);
+                ?>
+
+                <div style="margin-bottom: 20px;">
+                    <h3>All Articles (<?php echo $total_count; ?> total)</h3>
+
+                    <!-- Search Form -->
+                    <form method="get" action="" style="margin-bottom: 15px;">
+                        <input type="hidden" name="page" value="envirolink-aggregator" />
+                        <input type="text" name="article_search"
+                               value="<?php echo esc_attr($search_query); ?>"
+                               placeholder="Search by title..."
+                               style="width: 300px; padding: 5px;" />
+                        <button type="submit" class="button">Search</button>
+                        <?php if (!empty($search_query)): ?>
+                            <a href="<?php echo admin_url('admin.php?page=envirolink-aggregator'); ?>"
+                               class="button" onclick="$('.nav-tab').removeClass('nav-tab-active'); $('[href=\'#articles\']').addClass('nav-tab-active'); $('.tab-content').hide(); $('#articles-tab').show(); return true;">
+                                Clear Search
+                            </a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+
+                <?php if (empty($articles)): ?>
+                    <p>No articles found.</p>
+                <?php else: ?>
+                    <table class="wp-list-table widefat fixed striped" style="margin-top: 10px;">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">Image</th>
+                                <th style="width: 120px;">Date</th>
+                                <th>Headline</th>
+                                <th style="width: 150px;">Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($articles as $article):
+                                $source_name = get_post_meta($article->ID, 'envirolink_source_name', true);
+                                $pubdate = get_post_meta($article->ID, 'envirolink_pubdate', true);
+                                $has_thumbnail = has_post_thumbnail($article->ID);
+                                $article_url = get_permalink($article->ID);
+
+                                // Use pubdate if available, otherwise use post_date
+                                $display_date = $pubdate ? date('M j, Y', strtotime($pubdate)) : date('M j, Y', strtotime($article->post_date));
+                            ?>
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <?php if ($has_thumbnail): ?>
+                                            <span style="font-size: 20px;" title="Has featured image">🖼️</span>
+                                        <?php else: ?>
+                                            <span style="color: #ccc;" title="No featured image">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?php echo esc_html($display_date); ?></td>
+                                    <td>
+                                        <a href="<?php echo esc_url($article_url); ?>"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           style="font-weight: 500;">
+                                            <?php echo esc_html($article->post_title); ?>
+                                        </a>
+                                        <div class="row-actions" style="font-size: 12px; color: #666;">
+                                            <span>
+                                                <a href="<?php echo get_edit_post_link($article->ID); ?>">Edit</a>
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td><?php echo esc_html($source_name ?: '—'); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
             </div>
         </div>
 
