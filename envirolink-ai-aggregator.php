@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.3
+ * Version: 1.11.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,9 +14,26 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.3');
+define('ENVIROLINK_VERSION', '1.11.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
+
+// Load Plugin Update Checker library
+require ENVIROLINK_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php';
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+
+// Initialize update checker
+$updateChecker = PucFactory::buildUpdateChecker(
+    'https://github.com/jknauernever/envirolink-news/',
+    __FILE__,
+    'envirolink-ai-aggregator'
+);
+
+// Set the branch to check for updates (optional, defaults to 'main')
+$updateChecker->setBranch('main');
+
+// Enable GitHub releases for version tracking
+$updateChecker->getVcsApi()->enableReleaseAssets();
 
 /**
  * Main plugin class
