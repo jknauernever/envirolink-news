@@ -11,10 +11,13 @@
 // ============================================
 // PART 1: Display on Listing Pages (Homepage/Archives)
 // ============================================
+// DISABLED: Metadata removed from listing pages per user request
+// To re-enable, uncomment the code below
 
+/*
 /**
  * Add compact metadata to post cards on listing pages
- */
+ *\/
 function envirolink_listing_metadata() {
     // Only show on listing pages (not single posts)
     if (is_single()) {
@@ -77,6 +80,7 @@ function envirolink_listing_metadata() {
 // Hook into Blocksy's post card - try multiple hooks for compatibility
 add_action('blocksy:loop:card:end', 'envirolink_listing_metadata', 10);
 add_action('blocksy:posts-loop:after:excerpt', 'envirolink_listing_metadata', 10);
+*/
 
 
 // ============================================
