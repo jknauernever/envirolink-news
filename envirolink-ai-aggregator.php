@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.9
+ * Version: 1.12.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.9');
+define('ENVIROLINK_VERSION', '1.12.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -69,6 +69,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
         add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
         add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
+        add_action('wp_ajax_envirolink_check_updates', array($this, 'ajax_check_updates'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -393,6 +394,15 @@ class EnviroLink_AI_Aggregator {
                                     echo '<span style="color: green;">✓ Enabled</span>';
                                 }
                                 ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Plugin Updates:</th>
+                            <td>
+                                <div id="update-check-status">
+                                    <span style="color: #666;">Click button to check for updates</span>
+                                </div>
+                                <button type="button" class="button button-small" id="check-updates-btn" style="margin-top: 5px;">Check for Updates</button>
                             </td>
                         </tr>
                     </table>
@@ -1245,6 +1255,43 @@ class EnviroLink_AI_Aggregator {
                     }
                 });
             });
+
+            // Check for updates button
+            $('#check-updates-btn').click(function() {
+                var btn = $(this);
+                var statusDiv = $('#update-check-status');
+
+                btn.prop('disabled', true).text('Checking...');
+                statusDiv.html('<span style="color: #666;">Checking for updates...</span>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_check_updates' },
+                    success: function(response) {
+                        btn.prop('disabled', false).text('Check for Updates');
+
+                        if (response.success) {
+                            if (response.data.update_available) {
+                                // Update available
+                                statusDiv.html(
+                                    '<span style="color: #2271b1; font-weight: bold;">✓ ' + response.data.message + '</span><br>' +
+                                    '<a href="' + response.data.update_url + '" class="button button-primary" style="margin-top: 10px;">Go to Updates</a>'
+                                );
+                            } else {
+                                // Up to date
+                                statusDiv.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                            }
+                        } else {
+                            statusDiv.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                    },
+                    error: function() {
+                        btn.prop('disabled', false).text('Check for Updates');
+                        statusDiv.html('<span style="color: red;">✗ Error checking for updates</span>');
+                    }
+                });
+            });
         });
         </script>
         
@@ -1431,6 +1478,54 @@ class EnviroLink_AI_Aggregator {
             wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
         } catch (Error $e) {
             wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Check for plugin updates
+     */
+    public function ajax_check_updates() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            // Get the update checker instance using WordPress filter
+            $update_checker = apply_filters('puc_get_update_checker-envirolink-ai-aggregator', null);
+
+            if (!$update_checker) {
+                wp_send_json_error(array('message' => 'Update checker not initialized'));
+                return;
+            }
+
+            // Manually check for updates
+            $update = $update_checker->checkForUpdates();
+
+            if ($update !== null && version_compare($update->version, ENVIROLINK_VERSION, '>')) {
+                // Update available
+                $message = sprintf(
+                    'Update available: v%s → v%s',
+                    ENVIROLINK_VERSION,
+                    $update->version
+                );
+                wp_send_json_success(array(
+                    'message' => $message,
+                    'update_available' => true,
+                    'current_version' => ENVIROLINK_VERSION,
+                    'new_version' => $update->version,
+                    'update_url' => admin_url('plugins.php')
+                ));
+            } else {
+                // No update available
+                wp_send_json_success(array(
+                    'message' => 'Plugin is up to date (v' . ENVIROLINK_VERSION . ')',
+                    'update_available' => false,
+                    'current_version' => ENVIROLINK_VERSION
+                ));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error checking for updates: ' . $e->getMessage()));
         }
     }
 

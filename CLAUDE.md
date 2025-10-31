@@ -229,6 +229,13 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.12.0** (2025-10-31) - Add manual "Check for Updates" button
+- New "Plugin Updates" row in System Status with "Check for Updates" button
+- Manually triggers Plugin Update Checker to check GitHub for new releases
+- Displays update status: "Up to date" or "Update available" with version info
+- Provides "Go to Updates" button if update available
+- Complements automatic update checks with on-demand functionality
+
 **v1.11.1** (2025-10-29) - CRITICAL FIX: Prevent frontend crashes from randomize_daily_order
 - v1.11.0 filter was too broad and caused site crashes
 - `is_sitemap()` doesn't exist in WordPress < 5.5 - added function_exists() checks
