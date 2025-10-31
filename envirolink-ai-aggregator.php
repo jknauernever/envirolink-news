@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.7
+ * Version: 1.11.8
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.7');
+define('ENVIROLINK_VERSION', '1.11.8');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -911,6 +911,14 @@ class EnviroLink_AI_Aggregator {
                 $('.tab-content').hide();
                 $($(this).attr('href') + '-tab').show();
             });
+
+            // Auto-switch to Articles tab if searching
+            <?php if (!empty($search_query)): ?>
+                $('.nav-tab').removeClass('nav-tab-active');
+                $('.nav-tab[href="#articles"]').addClass('nav-tab-active');
+                $('.tab-content').hide();
+                $('#articles-tab').show();
+            <?php endif; ?>
 
             // Load saved log from last run on page load
             function loadSavedLog() {
