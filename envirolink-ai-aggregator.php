@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.11.6
+ * Version: 1.11.7
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.11.6');
+define('ENVIROLINK_VERSION', '1.11.7');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1428,7 +1428,10 @@ class EnviroLink_AI_Aggregator {
 
     /**
      * Cleanup duplicate articles
-     * Finds posts with identical titles and keeps only the most recent one
+     * Uses multiple strategies to find duplicates:
+     * 1. Same source URL (exact duplicates from RSS)
+     * 2. Identical titles
+     * 3. Very similar titles (85%+ similarity)
      */
     private function cleanup_duplicates() {
         global $wpdb;
@@ -1453,22 +1456,34 @@ class EnviroLink_AI_Aggregator {
         $total_posts = count($posts);
 
         $this->log_message('Found ' . $total_posts . ' EnviroLink posts to check');
+        $this->log_message('Using smart duplicate detection: source URL + fuzzy title matching');
 
-        // Group posts by normalized title (lowercase, trimmed)
-        $title_groups = array();
-        foreach ($posts as $post) {
-            $normalized_title = strtolower(trim($post->post_title));
-            if (!isset($title_groups[$normalized_title])) {
-                $title_groups[$normalized_title] = array();
-            }
-            $title_groups[$normalized_title][] = $post;
-        }
-
-        // Find duplicates (groups with more than one post)
         $duplicates_found = 0;
         $deleted_count = 0;
+        $processed_ids = array(); // Track which posts we've already processed
 
-        foreach ($title_groups as $title => $group) {
+        // Strategy 1: Group by source URL (exact duplicates from same RSS article)
+        $this->log_message('');
+        $this->log_message('Step 1: Checking for posts with identical source URLs...');
+        $source_url_groups = array();
+
+        foreach ($posts as $post) {
+            if (in_array($post->ID, $processed_ids)) {
+                continue; // Already processed
+            }
+
+            $source_url = get_post_meta($post->ID, 'envirolink_source_url', true);
+            if (empty($source_url)) {
+                continue;
+            }
+
+            if (!isset($source_url_groups[$source_url])) {
+                $source_url_groups[$source_url] = array();
+            }
+            $source_url_groups[$source_url][] = $post;
+        }
+
+        foreach ($source_url_groups as $url => $group) {
             if (count($group) > 1) {
                 $duplicates_found++;
 
@@ -1477,22 +1492,97 @@ class EnviroLink_AI_Aggregator {
                     return strtotime($b->post_date) - strtotime($a->post_date);
                 });
 
-                $keep = $group[0]; // Keep the newest post
-                $this->log_message('Found ' . count($group) . ' duplicates of: "' . $keep->post_title . '"');
-                $this->log_message('  → Keeping post ID ' . $keep->ID . ' (published ' . $keep->post_date . ')');
+                $keep = $group[0];
+                $this->log_message('Found ' . count($group) . ' posts with same source URL');
+                $this->log_message('  → Keeping: "' . $keep->post_title . '" (ID ' . $keep->ID . ', ' . $keep->post_date . ')');
+
+                // Mark keeper as processed
+                $processed_ids[] = $keep->ID;
 
                 // Delete the rest
                 for ($i = 1; $i < count($group); $i++) {
                     $delete = $group[$i];
-                    $this->log_message('  → Deleting duplicate ID ' . $delete->ID . ' (published ' . $delete->post_date . ')');
+                    $this->log_message('  → Deleting: "' . $delete->post_title . '" (ID ' . $delete->ID . ')');
 
-                    // Permanently delete (bypass trash)
                     $result = wp_delete_post($delete->ID, true);
-
                     if ($result) {
                         $deleted_count++;
+                        $processed_ids[] = $delete->ID;
                     } else {
-                        $this->log_message('  ✗ Failed to delete post ID ' . $delete->ID);
+                        $this->log_message('    ✗ Failed to delete post ID ' . $delete->ID);
+                    }
+                }
+            }
+        }
+
+        // Strategy 2 & 3: Check for similar titles among remaining posts
+        $this->log_message('');
+        $this->log_message('Step 2: Checking for posts with similar titles...');
+
+        $remaining_posts = array();
+        foreach ($posts as $post) {
+            if (!in_array($post->ID, $processed_ids)) {
+                $remaining_posts[] = $post;
+            }
+        }
+
+        $this->log_message('Checking ' . count($remaining_posts) . ' remaining posts for title similarity');
+
+        // Compare each post with every other post
+        for ($i = 0; $i < count($remaining_posts); $i++) {
+            $post_a = $remaining_posts[$i];
+
+            if (in_array($post_a->ID, $processed_ids)) {
+                continue;
+            }
+
+            $duplicates = array($post_a);
+            $title_a = strtolower(trim($post_a->post_title));
+
+            for ($j = $i + 1; $j < count($remaining_posts); $j++) {
+                $post_b = $remaining_posts[$j];
+
+                if (in_array($post_b->ID, $processed_ids)) {
+                    continue;
+                }
+
+                $title_b = strtolower(trim($post_b->post_title));
+
+                // Check if titles are similar
+                $similarity = $this->calculate_title_similarity($title_a, $title_b);
+
+                if ($similarity >= 85) { // 85% or more similar
+                    $duplicates[] = $post_b;
+                    $this->log_message('Found similar titles (' . round($similarity) . '% match):');
+                    $this->log_message('  • "' . $post_a->post_title . '"');
+                    $this->log_message('  • "' . $post_b->post_title . '"');
+                }
+            }
+
+            // If we found duplicates, keep the newest
+            if (count($duplicates) > 1) {
+                $duplicates_found++;
+
+                // Sort by post date (newest first)
+                usort($duplicates, function($a, $b) {
+                    return strtotime($b->post_date) - strtotime($a->post_date);
+                });
+
+                $keep = $duplicates[0];
+                $this->log_message('  → Keeping: "' . $keep->post_title . '" (ID ' . $keep->ID . ')');
+                $processed_ids[] = $keep->ID;
+
+                // Delete the rest
+                for ($k = 1; $k < count($duplicates); $k++) {
+                    $delete = $duplicates[$k];
+                    $this->log_message('  → Deleting: "' . $delete->post_title . '" (ID ' . $delete->ID . ')');
+
+                    $result = wp_delete_post($delete->ID, true);
+                    if ($result) {
+                        $deleted_count++;
+                        $processed_ids[] = $delete->ID;
+                    } else {
+                        $this->log_message('    ✗ Failed to delete post ID ' . $delete->ID);
                     }
                 }
             }
@@ -1506,6 +1596,7 @@ class EnviroLink_AI_Aggregator {
 
         if ($deleted_count > 0) {
             $message = "Cleanup complete! Found {$duplicates_found} sets of duplicates and deleted {$deleted_count} duplicate posts.";
+            $this->log_message('');
             $this->log_message($message);
         } else {
             $message = "No duplicates found. All articles are unique!";
@@ -1518,6 +1609,16 @@ class EnviroLink_AI_Aggregator {
             'success' => true,
             'message' => $message
         );
+    }
+
+    /**
+     * Calculate similarity between two titles
+     * Returns percentage (0-100) of how similar they are
+     */
+    private function calculate_title_similarity($title_a, $title_b) {
+        // Use PHP's similar_text function which calculates similarity
+        similar_text($title_a, $title_b, $percent);
+        return $percent;
     }
 
     /**
