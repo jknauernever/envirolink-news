@@ -229,12 +229,19 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.12.0** (2025-10-31) - Add manual "Check for Updates" button
+**v1.12.1** (2025-11-01) - CRITICAL FIX: Plugin Update Checker loading error
+- Fixed fatal error: `Failed opening required 'plugin-update-checker/plugin-update-checker.php'`
+- Corrected ZIP file structure: plugin-update-checker now properly included as subdirectory
+- Issue was packaging bug in v1.12.0, not code issue
+- Plugin now activates and loads correctly
+
+**v1.12.0** (2025-10-31) - Add manual "Check for Updates" button (BROKEN - packaging issue)
 - New "Plugin Updates" row in System Status with "Check for Updates" button
 - Manually triggers Plugin Update Checker to check GitHub for new releases
 - Displays update status: "Up to date" or "Update available" with version info
 - Provides "Go to Updates" button if update available
 - Complements automatic update checks with on-demand functionality
+- ISSUE: ZIP structure was incorrect, caused fatal error on activation (fixed in v1.12.1)
 
 **v1.11.1** (2025-10-29) - CRITICAL FIX: Prevent frontend crashes from randomize_daily_order
 - v1.11.0 filter was too broad and caused site crashes
