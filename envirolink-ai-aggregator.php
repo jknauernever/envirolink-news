@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.12.1
+ * Version: 1.12.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.12.1');
+define('ENVIROLINK_VERSION', '1.12.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -22,18 +22,19 @@ define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 require ENVIROLINK_PLUGIN_DIR . 'plugin-update-checker/plugin-update-checker.php';
 use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
-// Initialize update checker
-$updateChecker = PucFactory::buildUpdateChecker(
+// Initialize update checker (global variable for access in AJAX handlers)
+global $envirolink_update_checker;
+$envirolink_update_checker = PucFactory::buildUpdateChecker(
     'https://github.com/jknauernever/envirolink-news/',
     __FILE__,
     'envirolink-ai-aggregator'
 );
 
 // Set the branch to check for updates (optional, defaults to 'main')
-$updateChecker->setBranch('main');
+$envirolink_update_checker->setBranch('main');
 
 // Enable GitHub releases for version tracking
-$updateChecker->getVcsApi()->enableReleaseAssets();
+$envirolink_update_checker->getVcsApi()->enableReleaseAssets();
 
 /**
  * Main plugin class
@@ -1485,22 +1486,21 @@ class EnviroLink_AI_Aggregator {
      * AJAX: Check for plugin updates
      */
     public function ajax_check_updates() {
+        global $envirolink_update_checker;
+
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Unauthorized'));
             return;
         }
 
         try {
-            // Get the update checker instance using WordPress filter
-            $update_checker = apply_filters('puc_get_update_checker-envirolink-ai-aggregator', null);
-
-            if (!$update_checker) {
+            if (!$envirolink_update_checker) {
                 wp_send_json_error(array('message' => 'Update checker not initialized'));
                 return;
             }
 
             // Manually check for updates
-            $update = $update_checker->checkForUpdates();
+            $update = $envirolink_update_checker->checkForUpdates();
 
             if ($update !== null && version_compare($update->version, ENVIROLINK_VERSION, '>')) {
                 // Update available
