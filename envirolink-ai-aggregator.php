@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.14.1
+ * Version: 1.14.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.14.1');
+define('ENVIROLINK_VERSION', '1.14.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -72,7 +72,6 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
         add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
         add_action('wp_ajax_envirolink_check_updates', array($this, 'ajax_check_updates'));
-        add_action('wp_ajax_envirolink_update_plugin', array($this, 'ajax_update_plugin'));
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
 
         // Post ordering - randomize within same day
@@ -1353,44 +1352,12 @@ class EnviroLink_AI_Aggregator {
 
                         if (response.success) {
                             if (response.data.update_available) {
-                                // Update available
+                                // Update available - redirect to WordPress updates page
                                 statusDiv.html(
                                     '<span style="color: #2271b1; font-weight: bold;">✓ ' + response.data.message + '</span><br>' +
-                                    '<button type="button" class="button button-primary" id="update-now-btn" style="margin-top: 10px;">Update Now</button> ' +
-                                    '<a href="' + response.data.update_url + '" class="button" style="margin-top: 10px;">View Details</a>'
+                                    '<a href="' + response.data.update_url + '" class="button button-primary" style="margin-top: 10px;">Update Now</a> ' +
+                                    '<a href="https://github.com/jknauernever/envirolink-news/releases/tag/v' + response.data.new_version + '" target="_blank" class="button" style="margin-top: 10px;">View Release Notes</a>'
                                 );
-
-                                // Add click handler for Update Now button
-                                $('#update-now-btn').on('click', function() {
-                                    if (!confirm('Update EnviroLink plugin to ' + response.data.new_version + '?\n\nThe plugin will be updated automatically.')) {
-                                        return;
-                                    }
-
-                                    var updateBtn = $(this);
-                                    updateBtn.prop('disabled', true).text('Updating...');
-                                    statusDiv.html('<span style="color: #2271b1;">⏳ Updating plugin...</span>');
-
-                                    $.ajax({
-                                        url: ajaxurl,
-                                        type: 'POST',
-                                        data: { action: 'envirolink_update_plugin' },
-                                        success: function(updateResponse) {
-                                            if (updateResponse.success) {
-                                                statusDiv.html('<span style="color: green; font-weight: bold;">✓ ' + updateResponse.data.message + '</span><br><span style="color: #666; font-size: 12px;">Please refresh the page to see the new version.</span>');
-                                                setTimeout(function() {
-                                                    location.reload();
-                                                }, 2000);
-                                            } else {
-                                                statusDiv.html('<span style="color: red;">✗ ' + updateResponse.data.message + '</span>');
-                                                updateBtn.prop('disabled', false).text('Update Now');
-                                            }
-                                        },
-                                        error: function() {
-                                            statusDiv.html('<span style="color: red;">✗ Error updating plugin</span>');
-                                            updateBtn.prop('disabled', false).text('Update Now');
-                                        }
-                                    });
-                                });
                             } else {
                                 // Up to date
                                 statusDiv.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
@@ -1638,43 +1605,6 @@ class EnviroLink_AI_Aggregator {
             }
         } catch (Exception $e) {
             wp_send_json_error(array('message' => 'Error checking for updates: ' . $e->getMessage()));
-        }
-    }
-
-    /**
-     * AJAX: Update plugin to latest version
-     */
-    public function ajax_update_plugin() {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'Unauthorized'));
-            return;
-        }
-
-        try {
-            // Include WordPress upgrade functions
-            require_once(ABSPATH . 'wp-admin/includes/class-wp-upgrader.php');
-            require_once(ABSPATH . 'wp-admin/includes/file.php');
-            require_once(ABSPATH . 'wp-admin/includes/misc.php');
-            require_once(ABSPATH . 'wp-admin/includes/plugin.php');
-
-            // Get plugin file path
-            $plugin_file = plugin_basename(__FILE__);
-
-            // Create upgrader instance with a quiet skin
-            $upgrader = new Plugin_Upgrader(new WP_Ajax_Upgrader_Skin());
-
-            // Perform the upgrade
-            $result = $upgrader->upgrade($plugin_file);
-
-            if (is_wp_error($result)) {
-                wp_send_json_error(array('message' => 'Update failed: ' . $result->get_error_message()));
-            } elseif ($result === false) {
-                wp_send_json_error(array('message' => 'Update failed - plugin may already be up to date'));
-            } else {
-                wp_send_json_success(array('message' => 'Plugin updated successfully!'));
-            }
-        } catch (Exception $e) {
-            wp_send_json_error(array('message' => 'Update error: ' . $e->getMessage()));
         }
     }
 
