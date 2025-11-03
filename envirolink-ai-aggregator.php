@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.13.1
+ * Version: 1.14.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.13.1');
+define('ENVIROLINK_VERSION', '1.14.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -61,6 +61,7 @@ class EnviroLink_AI_Aggregator {
         
         // Cron hooks
         add_action('envirolink_fetch_feeds', array($this, 'fetch_and_process_feeds'));
+        add_action('envirolink_daily_roundup', array($this, 'generate_daily_roundup'));
         
         // AJAX handlers
         add_action('wp_ajax_envirolink_run_now', array($this, 'ajax_run_now'));
@@ -122,10 +123,29 @@ class EnviroLink_AI_Aggregator {
         if (!get_option('envirolink_update_existing')) {
             add_option('envirolink_update_existing', 'no');
         }
-        
+
+        if (!get_option('envirolink_daily_roundup_enabled')) {
+            add_option('envirolink_daily_roundup_enabled', 'no');
+        }
+
         // Schedule cron job (hourly)
         if (!wp_next_scheduled('envirolink_fetch_feeds')) {
             wp_schedule_event(time(), 'hourly', 'envirolink_fetch_feeds');
+        }
+
+        // Schedule daily roundup (8am ET)
+        if (!wp_next_scheduled('envirolink_daily_roundup')) {
+            // Calculate next 8am ET
+            $timezone = new DateTimeZone('America/New_York');
+            $now = new DateTime('now', $timezone);
+            $next_run = new DateTime('today 8:00 AM', $timezone);
+
+            // If it's past 8am today, schedule for tomorrow
+            if ($now >= $next_run) {
+                $next_run->modify('+1 day');
+            }
+
+            wp_schedule_event($next_run->getTimestamp(), 'daily', 'envirolink_daily_roundup');
         }
     }
     
@@ -133,10 +153,16 @@ class EnviroLink_AI_Aggregator {
      * Plugin deactivation
      */
     public function deactivate() {
-        // Remove cron job
+        // Remove feed fetching cron job
         $timestamp = wp_next_scheduled('envirolink_fetch_feeds');
         if ($timestamp) {
             wp_unschedule_event($timestamp, 'envirolink_fetch_feeds');
+        }
+
+        // Remove daily roundup cron job
+        $roundup_timestamp = wp_next_scheduled('envirolink_daily_roundup');
+        if ($roundup_timestamp) {
+            wp_unschedule_event($roundup_timestamp, 'envirolink_daily_roundup');
         }
     }
 
@@ -246,6 +272,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
             update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
+            update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
 
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
@@ -569,6 +596,20 @@ class EnviroLink_AI_Aggregator {
                                     Randomize order of posts within the same day
                                 </label>
                                 <p class="description">When enabled, posts from the same day will appear in random order instead of being clustered by source. Prevents all Guardian posts appearing together, then all Mongabay posts, etc. Does not modify timestamps.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Daily News Roundup
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="daily_roundup_enabled" id="daily_roundup_enabled"
+                                           <?php checked(get_option('envirolink_daily_roundup_enabled', 'no'), 'yes'); ?> />
+                                    Enable daily editorial roundup post
+                                </label>
+                                <p class="description">When enabled, an AI-generated editorial roundup of the past 24 hours' environmental news will be published automatically at 8:00 AM ET daily. The post will have a balanced, humanistic tone and appear as original content titled "Daily Environmental News Roundup by the EnviroLink Team - [Date]". The aggregator will run first to ensure all recent articles are included.</p>
                             </td>
                         </tr>
                     </table>
@@ -3272,6 +3313,200 @@ CONTENT: [rewritten content]";
         }
         
         return false;
+    }
+
+    /**
+     * Generate daily editorial roundup
+     * Called by CRON at 8am ET daily
+     */
+    public function generate_daily_roundup() {
+        // Check if feature is enabled
+        if (get_option('envirolink_daily_roundup_enabled', 'no') !== 'yes') {
+            error_log('EnviroLink: Daily roundup skipped - feature is disabled');
+            return;
+        }
+
+        error_log('EnviroLink: Starting daily roundup generation');
+
+        // Step 1: Run the feed aggregator first to get latest articles
+        error_log('EnviroLink: Running feed aggregator...');
+        $result = $this->fetch_and_process_feeds(true); // manual_run = true to bypass schedule checks
+
+        if (!$result['success']) {
+            error_log('EnviroLink: Feed aggregation failed: ' . $result['message']);
+            return;
+        }
+
+        error_log('EnviroLink: Feed aggregation completed: ' . $result['message']);
+
+        // Step 2: Get all articles from the past 24 hours
+        $cutoff_time = current_time('timestamp') - (24 * 60 * 60); // 24 hours ago
+
+        $articles = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'date_query' => array(
+                array(
+                    'after' => date('Y-m-d H:i:s', $cutoff_time),
+                    'inclusive' => true
+                )
+            ),
+            'meta_query' => array(
+                array(
+                    'key' => 'envirolink_source_url',
+                    'compare' => 'EXISTS'
+                )
+            ),
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+
+        if (empty($articles)) {
+            error_log('EnviroLink: No articles found in past 24 hours - skipping roundup');
+            return;
+        }
+
+        error_log('EnviroLink: Found ' . count($articles) . ' articles from past 24 hours');
+
+        // Step 3: Prepare article summaries for AI
+        $article_summaries = array();
+        foreach ($articles as $article) {
+            $source_name = get_post_meta($article->ID, 'envirolink_source_name', true);
+            $original_title = get_post_meta($article->ID, 'envirolink_original_title', true);
+
+            $article_summaries[] = array(
+                'title' => $article->post_title,
+                'original_title' => $original_title,
+                'source' => $source_name,
+                'excerpt' => wp_trim_words($article->post_content, 50, '...'),
+                'url' => get_permalink($article->ID)
+            );
+        }
+
+        // Step 4: Generate editorial content with AI
+        $api_key = get_option('envirolink_api_key');
+        if (empty($api_key)) {
+            error_log('EnviroLink: Cannot generate roundup - API key not configured');
+            return;
+        }
+
+        $roundup_content = $this->generate_roundup_with_ai($article_summaries, $api_key);
+
+        if (!$roundup_content) {
+            error_log('EnviroLink: AI failed to generate roundup content');
+            return;
+        }
+
+        // Step 5: Create the roundup post
+        $post_category = get_option('envirolink_post_category');
+        $today_date = date('F j, Y'); // e.g., "November 3, 2025"
+
+        $post_data = array(
+            'post_title' => 'Daily Environmental News Roundup by the EnviroLink Team - ' . $today_date,
+            'post_content' => $roundup_content,
+            'post_status' => 'publish',
+            'post_type' => 'post',
+            'post_author' => 1
+        );
+
+        if ($post_category) {
+            $post_data['post_category'] = array($post_category);
+        }
+
+        $post_id = wp_insert_post($post_data);
+
+        if ($post_id) {
+            // Mark this as a roundup post (not from RSS)
+            update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
+            update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
+            update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
+
+            error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
+        } else {
+            error_log('EnviroLink: Failed to create roundup post');
+        }
+    }
+
+    /**
+     * Generate editorial roundup content using AI
+     */
+    private function generate_roundup_with_ai($articles, $api_key) {
+        // Build the article list for the prompt
+        $articles_text = '';
+        foreach ($articles as $i => $article) {
+            $num = $i + 1;
+            $articles_text .= "\n{$num}. {$article['title']}";
+            $articles_text .= "\n   Source: {$article['source']}";
+            $articles_text .= "\n   Summary: {$article['excerpt']}\n";
+        }
+
+        $prompt = "You are writing the daily editorial roundup for EnviroLink.org, a respected environmental news website. Your role is to create a cohesive, humanistic editorial piece that connects the day's environmental news stories.
+
+Here are today's environmental news articles:
+{$articles_text}
+
+Your task is to write a balanced, editorial-style roundup (400-600 words) that:
+
+1. Opens with a brief, engaging introduction (1-2 sentences)
+2. Connects the stories thematically rather than listing them separately
+3. Highlights key developments, trends, or patterns across the stories
+4. Maintains a balanced tone - not overly enthusiastic or pessimistic
+5. Writes in a warm, humanistic voice that sounds like passionate environmental journalists
+6. Avoids hyperbole and maintains journalistic credibility
+7. Ends with a brief reflection or forward-looking thought
+
+Writing guidelines:
+- Use \"we\" when appropriate to create connection with readers
+- Be informative but accessible
+- Focus on what matters and why
+- Connect global issues to human impact where relevant
+- Acknowledge complexity - the environmental movement includes both challenges and progress
+
+Format your response as:
+CONTENT: [your editorial roundup]
+
+Do NOT include a title - just the content.";
+
+        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
+            'timeout' => 90, // Longer timeout for editorial content
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'x-api-key' => $api_key,
+                'anthropic-version' => '2023-06-01'
+            ),
+            'body' => json_encode(array(
+                'model' => 'claude-sonnet-4-20250514',
+                'max_tokens' => 2048, // More tokens for longer editorial
+                'messages' => array(
+                    array(
+                        'role' => 'user',
+                        'content' => $prompt
+                    )
+                )
+            ))
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('EnviroLink: AI API error: ' . $response->get_error_message());
+            return false;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!isset($body['content'][0]['text'])) {
+            error_log('EnviroLink: AI response missing content');
+            return false;
+        }
+
+        $text = $body['content'][0]['text'];
+
+        // Parse response
+        if (preg_match('/CONTENT:\s*(.+)$/s', $text, $content_match)) {
+            return trim($content_match[1]);
+        }
+
+        // If parsing fails, return the raw content
+        return $text;
     }
 }
 
