@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.12.5
+ * Version: 1.13.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.12.5');
+define('ENVIROLINK_VERSION', '1.13.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2171,6 +2171,20 @@ class EnviroLink_AI_Aggregator {
      * @param int $specific_feed_index Process only this feed (null = all feeds)
      */
     public function fetch_and_process_feeds($manual_run = false, $specific_feed_index = null) {
+        // CRITICAL: Prevent concurrent executions that cause duplicates
+        // Check if another instance is already running
+        $lock_key = 'envirolink_processing_lock';
+        $is_locked = get_transient($lock_key);
+
+        if ($is_locked && !$manual_run) {
+            // Another instance is running - skip this execution
+            error_log('EnviroLink: Skipping CRON run - another instance is already processing');
+            return array('success' => false, 'message' => 'Another instance is already running');
+        }
+
+        // Set lock for 10 minutes (600 seconds)
+        set_transient($lock_key, time(), 600);
+
         // Increase resource limits for long-running feed processing
         // Prevents timeouts when processing multiple articles with AI + image scraping
         @ini_set('max_execution_time', 300); // 5 minutes
@@ -2184,6 +2198,7 @@ class EnviroLink_AI_Aggregator {
         $update_existing = get_option('envirolink_update_existing', 'no');
 
         if (empty($api_key)) {
+            delete_transient($lock_key); // Release lock
             return array('success' => false, 'message' => 'API key not configured');
         }
 
@@ -2238,6 +2253,7 @@ class EnviroLink_AI_Aggregator {
         if ($total_articles == 0) {
             $this->log_message('No articles to process');
             $this->clear_progress();
+            delete_transient('envirolink_processing_lock'); // Release lock
             return array('success' => true, 'message' => 'No articles to process');
         }
 
@@ -2283,8 +2299,12 @@ class EnviroLink_AI_Aggregator {
                 $original_link = $item->get_permalink();
                 $original_title = $item->get_title();
 
+                $this->log_message('Checking article: ' . $original_title);
+                $this->log_message('→ Source URL: ' . $original_link);
+
                 // Use normalized URL for better duplicate detection
                 $normalized_link = $this->normalize_url($original_link);
+                $this->log_message('→ Normalized URL: ' . $normalized_link);
 
                 // First try exact match (backward compatibility)
                 $existing = get_posts(array(
@@ -2294,8 +2314,11 @@ class EnviroLink_AI_Aggregator {
                     'posts_per_page' => 1
                 ));
 
-                // If no exact match, try to find posts with similar normalized URLs
-                if (empty($existing)) {
+                if (!empty($existing)) {
+                    $this->log_message('→ Found exact URL match (Post ID: ' . $existing[0]->ID . ')');
+                } else {
+                    $this->log_message('→ No exact match, checking normalized URLs...');
+                    // Try to find posts with similar normalized URLs
                     $all_posts = get_posts(array(
                         'post_type' => 'post',
                         'meta_key' => 'envirolink_source_url',
@@ -2305,13 +2328,21 @@ class EnviroLink_AI_Aggregator {
                         'order' => 'DESC'
                     ));
 
+                    $this->log_message('→ Checking ' . count($all_posts) . ' recent posts for normalized match...');
+
                     foreach ($all_posts as $post) {
                         $existing_url = get_post_meta($post->ID, 'envirolink_source_url', true);
-                        if ($this->normalize_url($existing_url) === $normalized_link) {
+                        $existing_normalized = $this->normalize_url($existing_url);
+                        if ($existing_normalized === $normalized_link) {
                             $existing = array($post);
-                            $this->log_message('→ Found duplicate via URL normalization');
+                            $this->log_message('→ ✓ Found duplicate via URL normalization (Post ID: ' . $post->ID . ')');
+                            $this->log_message('   Existing URL: ' . $existing_url);
                             break;
                         }
+                    }
+
+                    if (empty($existing)) {
+                        $this->log_message('→ No duplicate found - will create new post');
                     }
                 }
 
@@ -2323,15 +2354,15 @@ class EnviroLink_AI_Aggregator {
                         // Update mode: we'll update this post
                         $is_update = true;
                         $existing_post_id = $existing[0]->ID;
-                        $this->log_message('Checking: ' . $original_title . ' (exists, checking for changes)');
+                        $this->log_message('→ Update mode: Will check for changes');
                     } else {
                         // Skip mode: skip this article
-                        $this->log_message('Skipped: ' . $original_title . ' (already exists)');
+                        $this->log_message('→ SKIPPING: Article already exists (Post ID: ' . $existing[0]->ID . ')');
                         $total_skipped++;
                         continue;
                     }
                 } else {
-                    $this->log_message('Processing: ' . $original_title);
+                    $this->log_message('→ NEW POST: Processing new article');
                 }
 
                 // Get original content
@@ -2492,12 +2523,13 @@ class EnviroLink_AI_Aggregator {
                     $post_id = wp_insert_post($post_data);
 
                     if ($post_id) {
-                        $this->log_message('→ Created new post successfully');
+                        $this->log_message('→ Created new post successfully (Post ID: ' . $post_id . ')');
                         // Store metadata
                         update_post_meta($post_id, 'envirolink_source_url', $original_link);
                         update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
                         update_post_meta($post_id, 'envirolink_original_title', $original_title);
                         update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
+                        $this->log_message('→ Stored source URL for duplicate detection: ' . $original_link);
 
                         // Store feed metadata
                         if (isset($feed_metadata['author'])) {
@@ -2554,6 +2586,9 @@ class EnviroLink_AI_Aggregator {
 
         // Clear progress tracking
         $this->clear_progress();
+
+        // Release the processing lock
+        delete_transient('envirolink_processing_lock');
 
         return array(
             'success' => true,
