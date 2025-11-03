@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.12.2
+ * Version: 1.12.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.12.2');
+define('ENVIROLINK_VERSION', '1.12.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1770,6 +1770,60 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * Emergency log save - called on shutdown to preserve logs even if script dies
+     */
+    public function emergency_save_log() {
+        $error = error_get_last();
+        if ($error !== null && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR))) {
+            // Fatal error occurred - save what we have
+            $progress = get_transient('envirolink_progress');
+            if ($progress && isset($progress['log'])) {
+                $progress['log'][] = '[' . date('H:i:s') . '] ✗ FATAL ERROR: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line'];
+                update_option('envirolink_last_run_log', $progress['log']);
+            }
+        }
+    }
+
+    /**
+     * Normalize URL for duplicate detection
+     * Handles http/https, www, trailing slashes, and query parameter variations
+     */
+    private function normalize_url($url) {
+        if (empty($url)) {
+            return '';
+        }
+
+        // Parse URL
+        $parsed = parse_url(strtolower(trim($url)));
+
+        if (!$parsed || !isset($parsed['host'])) {
+            return $url; // Return original if can't parse
+        }
+
+        // Remove www prefix
+        $host = preg_replace('/^www\./', '', $parsed['host']);
+
+        // Get path without trailing slash
+        $path = isset($parsed['path']) ? rtrim($parsed['path'], '/') : '';
+
+        // Sort query parameters for consistent comparison
+        $query = '';
+        if (isset($parsed['query'])) {
+            parse_str($parsed['query'], $params);
+            ksort($params);
+            $query = http_build_query($params);
+        }
+
+        // Rebuild URL without protocol (to ignore http vs https differences)
+        $normalized = $host . $path;
+        if ($query) {
+            $normalized .= '?' . $query;
+        }
+
+        return $normalized;
+    }
+
+    /**
      * Check if a feed is due for processing based on its schedule
      */
     private function is_feed_due($feed) {
@@ -1812,6 +1866,17 @@ class EnviroLink_AI_Aggregator {
      * @param int $feed_index The feed index to update
      */
     private function update_feed_images($feed_index) {
+        // Increase resource limits
+        @ini_set('max_execution_time', 300); // 5 minutes
+        @ini_set('memory_limit', '256M');
+        @set_time_limit(300);
+
+        // Register shutdown handler to save log even if script dies
+        register_shutdown_function(array($this, 'emergency_save_log'));
+
+        $start_time = time();
+        $max_execution_time = 280; // Stop 20 seconds before timeout
+
         $feeds = get_option('envirolink_feeds', array());
 
         if (!isset($feeds[$feed_index])) {
@@ -1847,17 +1912,38 @@ class EnviroLink_AI_Aggregator {
         $updated_count = 0;
         $skipped_count = 0;
         $failed_count = 0;
+        $image_cache = array(); // Track downloaded images to avoid duplicates
 
         foreach ($posts as $index => $post) {
+            // Check for timeout AND memory limits
+            $elapsed_time = time() - $start_time;
+            $memory_usage = memory_get_usage(true) / 1024 / 1024; // MB
+
+            if ($elapsed_time > $max_execution_time) {
+                $this->log_message('⚠ Timeout protection: Stopping to prevent script death (elapsed: ' . $elapsed_time . 's)');
+                $this->log_message('Processed ' . ($index + 1) . ' of ' . $total_posts . ' posts');
+                $message = "Partial update: $updated_count images updated, $skipped_count skipped, $failed_count failed (timeout after " . ($index + 1) . " posts)";
+                $this->clear_progress(); // Save log
+                return array('success' => true, 'message' => $message);
+            }
+
+            if ($memory_usage > 200) { // Stop if using >200MB
+                $this->log_message('⚠ Memory protection: Stopping to prevent exhaustion (' . round($memory_usage) . 'MB used)');
+                $this->log_message('Processed ' . ($index + 1) . ' of ' . $total_posts . ' posts');
+                $message = "Partial update: $updated_count images updated, $skipped_count skipped, $failed_count failed (memory limit after " . ($index + 1) . " posts)";
+                $this->clear_progress(); // Save log
+                return array('success' => true, 'message' => $message);
+            }
+
             $progress_percent = floor((($index + 1) / $total_posts) * 100);
             $this->update_progress(array(
                 'percent' => $progress_percent,
                 'current' => $index + 1,
                 'total' => $total_posts,
-                'status' => 'Updating images for ' . $feed['name'] . '...'
+                'status' => 'Updating images for ' . $feed['name'] . '... (' . round($memory_usage) . 'MB, ' . $elapsed_time . 's)'
             ));
 
-            $this->log_message('Processing: ' . $post->post_title);
+            $this->log_message('Processing: ' . $post->post_title . ' [Memory: ' . round($memory_usage) . 'MB, Time: ' . $elapsed_time . 's]');
 
             // Get source URL
             $source_url = get_post_meta($post->ID, 'envirolink_source_url', true);
@@ -1920,19 +2006,45 @@ class EnviroLink_AI_Aggregator {
                 $image_url = $this->extract_image_from_url($source_url);
             }
 
-            // Set/update the featured image
+            // Set/update the featured image with duplicate detection
             if ($image_url) {
-                $success = $this->set_featured_image_from_url($image_url, $post->ID);
-                if ($success) {
-                    $this->log_message('  → ✓ Image updated successfully');
-                    $updated_count++;
+                // Check if we've already downloaded this exact image URL
+                if (isset($image_cache[$image_url])) {
+                    // Reuse the already-uploaded media library ID
+                    $this->log_message('  → Reusing previously downloaded image (ID: ' . $image_cache[$image_url] . ')');
+                    $result = set_post_thumbnail($post->ID, $image_cache[$image_url]);
+                    if ($result) {
+                        $this->log_message('  → ✓ Image reused successfully (saved bandwidth & time)');
+                        $updated_count++;
+                    } else {
+                        $this->log_message('  → ✗ Failed to set cached image as featured image');
+                        $failed_count++;
+                    }
                 } else {
-                    $this->log_message('  → ✗ Failed to set featured image');
-                    $failed_count++;
+                    // Download new image
+                    $attachment_id = $this->set_featured_image_from_url($image_url, $post->ID);
+                    if ($attachment_id) {
+                        $this->log_message('  → ✓ Image updated successfully');
+                        // Cache the attachment ID for future reuse
+                        $image_cache[$image_url] = $attachment_id;
+                        $updated_count++;
+                    } else {
+                        $this->log_message('  → ✗ Failed to set featured image');
+                        $failed_count++;
+                    }
                 }
             } else {
                 $this->log_message('  → ✗ No image found via any method');
                 $failed_count++;
+            }
+
+            // Periodically save progress to database (every 5 posts) to avoid data loss on crash
+            if (($index + 1) % 5 == 0) {
+                $progress = get_transient('envirolink_progress');
+                if ($progress && isset($progress['log'])) {
+                    update_option('envirolink_last_run_log', $progress['log']);
+                    $this->log_message('→ Checkpoint: Progress saved to database');
+                }
             }
         }
 
@@ -2168,12 +2280,37 @@ class EnviroLink_AI_Aggregator {
                 $original_link = $item->get_permalink();
                 $original_title = $item->get_title();
 
+                // Use normalized URL for better duplicate detection
+                $normalized_link = $this->normalize_url($original_link);
+
+                // First try exact match (backward compatibility)
                 $existing = get_posts(array(
                     'post_type' => 'post',
                     'meta_key' => 'envirolink_source_url',
                     'meta_value' => $original_link,
                     'posts_per_page' => 1
                 ));
+
+                // If no exact match, try to find posts with similar normalized URLs
+                if (empty($existing)) {
+                    $all_posts = get_posts(array(
+                        'post_type' => 'post',
+                        'meta_key' => 'envirolink_source_url',
+                        'meta_compare' => 'EXISTS',
+                        'posts_per_page' => 100, // Check recent posts
+                        'orderby' => 'date',
+                        'order' => 'DESC'
+                    ));
+
+                    foreach ($all_posts as $post) {
+                        $existing_url = get_post_meta($post->ID, 'envirolink_source_url', true);
+                        if ($this->normalize_url($existing_url) === $normalized_link) {
+                            $existing = array($post);
+                            $this->log_message('→ Found duplicate via URL normalization');
+                            break;
+                        }
+                    }
+                }
 
                 $is_update = false;
                 $existing_post_id = null;
@@ -2187,6 +2324,7 @@ class EnviroLink_AI_Aggregator {
                     } else {
                         // Skip mode: skip this article
                         $this->log_message('Skipped: ' . $original_title . ' (already exists)');
+                        $total_skipped++;
                         continue;
                     }
                 } else {
@@ -2874,6 +3012,7 @@ class EnviroLink_AI_Aggregator {
 
     /**
      * Download image and set as featured image for post
+     * @return int|false Attachment ID on success, false on failure
      */
     private function set_featured_image_from_url($image_url, $post_id) {
         if (empty($image_url)) {
@@ -2883,8 +3022,13 @@ class EnviroLink_AI_Aggregator {
 
         $this->log_message('    → Downloading image from: ' . $image_url);
 
-        // Download image
-        $tmp = download_url($image_url);
+        // Download image with error handling
+        try {
+            $tmp = download_url($image_url);
+        } catch (Exception $e) {
+            $this->log_message('    ✗ Exception during download: ' . $e->getMessage());
+            return false;
+        }
 
         if (is_wp_error($tmp)) {
             $this->log_message('    ✗ Failed to download image: ' . $tmp->get_error_message());
@@ -2912,8 +3056,27 @@ class EnviroLink_AI_Aggregator {
             'tmp_name' => $tmp
         );
 
-        // Upload to media library
-        $attachment_id = media_handle_sideload($file_array, $post_id);
+        // Upload to media library with error handling
+        $this->log_message('    → Starting media_handle_sideload()...');
+        try {
+            // Require WordPress media functions
+            if (!function_exists('media_handle_sideload')) {
+                require_once(ABSPATH . 'wp-admin/includes/media.php');
+                require_once(ABSPATH . 'wp-admin/includes/file.php');
+                require_once(ABSPATH . 'wp-admin/includes/image.php');
+            }
+
+            $attachment_id = media_handle_sideload($file_array, $post_id);
+            $this->log_message('    → media_handle_sideload() completed');
+        } catch (Exception $e) {
+            $this->log_message('    ✗ Exception during media upload: ' . $e->getMessage());
+            @unlink($tmp);
+            return false;
+        } catch (Error $e) {
+            $this->log_message('    ✗ Fatal error during media upload: ' . $e->getMessage());
+            @unlink($tmp);
+            return false;
+        }
 
         // Cleanup temp file
         @unlink($tmp);
@@ -2930,11 +3093,11 @@ class EnviroLink_AI_Aggregator {
 
         if ($result) {
             $this->log_message('    ✓ Set as featured image successfully');
+            return $attachment_id; // Return attachment ID for caching
         } else {
             $this->log_message('    ✗ Failed to set as featured image (set_post_thumbnail returned false)');
+            return false;
         }
-
-        return $result;
     }
 
     /**
