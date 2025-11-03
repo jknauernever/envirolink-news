@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.14.0
+ * Version: 1.14.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.14.0');
+define('ENVIROLINK_VERSION', '1.14.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -73,6 +73,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
         add_action('wp_ajax_envirolink_check_updates', array($this, 'ajax_check_updates'));
         add_action('wp_ajax_envirolink_update_plugin', array($this, 'ajax_update_plugin'));
+        add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -438,6 +439,7 @@ class EnviroLink_AI_Aggregator {
 
                     <p>
                         <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
+                        <button type="button" class="button" id="generate-roundup-btn" style="margin-left: 10px; background-color: #9c27b0; color: white; border-color: #7b1fa2;" title="Generate daily editorial roundup now (bypasses 8am schedule)">Generate Roundup Now</button>
                         <button type="button" class="button" id="fix-dates-btn" style="margin-left: 10px; background-color: #ff9800; color: white; border-color: #f57c00;" title="Sync all post dates to match RSS publication dates">Fix Post Order</button>
                         <button type="button" class="button" id="cleanup-duplicates-btn" style="margin-left: 10px; background-color: #e91e63; color: white; border-color: #c2185b;" title="Find and delete duplicate articles (keeps newest version)">Clean Up Duplicates</button>
                         <span id="run-now-status" style="margin-left: 10px;"></span>
@@ -1299,6 +1301,41 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
+            // Generate Roundup Now button
+            $('#generate-roundup-btn').click(function() {
+                if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true).text('Generating...');
+                status.html('<span style="color: #666;">⏳ Running aggregator and generating editorial content...</span>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_generate_roundup' },
+                    timeout: 180000, // 3 minutes timeout
+                    success: function(response) {
+                        if (response.success) {
+                            status.html(
+                                '<span style="color: green;">✓ ' + response.data.message + '</span><br>' +
+                                '<a href="' + response.data.post_url + '" target="_blank" class="button" style="margin-top: 10px;">View Roundup Post</a>'
+                            );
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false).text('Generate Roundup Now');
+                    },
+                    error: function() {
+                        status.html('<span style="color: red;">✗ Error generating roundup. Check error logs for details.</span>');
+                        btn.prop('disabled', false).text('Generate Roundup Now');
+                    }
+                });
+            });
+
             // Check for updates button
             $('#check-updates-btn').click(function() {
                 var btn = $(this);
@@ -1638,6 +1675,52 @@ class EnviroLink_AI_Aggregator {
             }
         } catch (Exception $e) {
             wp_send_json_error(array('message' => 'Update error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Generate daily roundup now (manual trigger)
+     */
+    public function ajax_generate_roundup() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            // Call the generate_daily_roundup function
+            $this->generate_daily_roundup();
+
+            // Check if it succeeded by looking for the most recent roundup post
+            $recent_roundup = get_posts(array(
+                'post_type' => 'post',
+                'posts_per_page' => 1,
+                'meta_query' => array(
+                    array(
+                        'key' => 'envirolink_is_roundup',
+                        'value' => 'yes',
+                        'compare' => '='
+                    )
+                ),
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            if (!empty($recent_roundup)) {
+                $roundup_post = $recent_roundup[0];
+                $article_count = get_post_meta($roundup_post->ID, 'envirolink_roundup_article_count', true);
+                $post_url = get_permalink($roundup_post->ID);
+
+                wp_send_json_success(array(
+                    'message' => 'Daily roundup generated successfully! Included ' . $article_count . ' articles.',
+                    'post_url' => $post_url,
+                    'post_id' => $roundup_post->ID
+                ));
+            } else {
+                wp_send_json_error(array('message' => 'Roundup generation completed but no post was created. Check error logs for details.'));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error generating roundup: ' . $e->getMessage()));
         }
     }
 
