@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.14.2
+ * Version: 1.14.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.14.2');
+define('ENVIROLINK_VERSION', '1.14.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3352,34 +3352,28 @@ CONTENT: [rewritten content]";
 
         error_log('EnviroLink: Feed aggregation completed: ' . $result['message']);
 
-        // Step 2: Get all articles from the past 24 hours
-        $cutoff_time = current_time('timestamp') - (24 * 60 * 60); // 24 hours ago
-
+        // Step 2: Get the most recent articles (by when they were ADDED to WordPress, not publication date)
+        // We use ID ordering because higher IDs = more recently added to the database
+        // This gets "today's news" regardless of the articles' original publication dates
         $articles = get_posts(array(
             'post_type' => 'post',
-            'posts_per_page' => -1,
-            'date_query' => array(
-                array(
-                    'after' => date('Y-m-d H:i:s', $cutoff_time),
-                    'inclusive' => true
-                )
-            ),
+            'posts_per_page' => 30, // Get last 30 articles added to WordPress
             'meta_query' => array(
                 array(
                     'key' => 'envirolink_source_url',
                     'compare' => 'EXISTS'
                 )
             ),
-            'orderby' => 'date',
+            'orderby' => 'ID', // Order by ID = order by when added to WordPress
             'order' => 'DESC'
         ));
 
         if (empty($articles)) {
-            error_log('EnviroLink: No articles found in past 24 hours - skipping roundup');
+            error_log('EnviroLink: No EnviroLink articles found - skipping roundup');
             return;
         }
 
-        error_log('EnviroLink: Found ' . count($articles) . ' articles from past 24 hours');
+        error_log('EnviroLink: Found ' . count($articles) . ' recent articles for roundup');
 
         // Step 3: Prepare article summaries for AI
         $article_summaries = array();
