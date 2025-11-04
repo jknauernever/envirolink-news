@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.20.0
+ * Version: 1.21.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.20.0');
+define('ENVIROLINK_VERSION', '1.21.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -73,6 +73,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
         add_action('wp_ajax_envirolink_check_updates', array($this, 'ajax_check_updates'));
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
+        add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -462,7 +463,7 @@ class EnviroLink_AI_Aggregator {
                         </div>
 
                         <h3 style="margin-bottom: 12px; font-size: 14px; color: #23282d;">Maintenance Tools</h3>
-                        <div style="display: flex; gap: 8px;">
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <button type="button" class="button" id="fix-dates-btn" title="Sync post dates to RSS publication dates">
                                 <span class="dashicons dashicons-calendar" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Fix Post Dates
@@ -470,6 +471,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="cleanup-duplicates-btn" title="Find and delete duplicate articles">
                                 <span class="dashicons dashicons-trash" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Clean Duplicates
+                            </button>
+                            <button type="button" class="button" id="categorize-posts-btn" title="Add 'newsfeed' category to all aggregated posts">
+                                <span class="dashicons dashicons-tag" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Categorize Posts
                             </button>
                         </div>
 
@@ -1400,6 +1405,40 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
+            // Categorize posts button
+            $('#categorize-posts-btn').click(function() {
+                if (!confirm('This will add the "newsfeed" category to all posts that were aggregated from RSS feeds.\n\nExisting categories will be preserved.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_categorize_posts' },
+                    success: function(response) {
+                        stopProgressPolling();
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false);
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        status.html('<span style="color: red;">✗ Error occurred</span>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
+
             // Generate Roundup Now button
             $('#generate-roundup-btn').click(function() {
                 if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
@@ -1727,6 +1766,30 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * AJAX: Categorize all aggregated posts
+     */
+    public function ajax_categorize_posts() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->categorize_posts();
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
      * AJAX: Check for plugin updates
      */
     public function ajax_check_updates() {
@@ -1995,6 +2058,159 @@ class EnviroLink_AI_Aggregator {
             $message = "No duplicates found. All articles are unique!";
             $this->log_message($message);
         }
+
+        $this->clear_progress();
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
+    }
+
+    /**
+     * Categorize all aggregated posts
+     * Adds "newsfeed" category to all RSS aggregated posts
+     * Adds "Featured" category to all daily roundup posts
+     */
+    private function categorize_posts() {
+        $this->clear_progress();
+        $this->log_message('Starting bulk categorization...');
+
+        // Get or create "newsfeed" category
+        $newsfeed_cat = get_category_by_slug('newsfeed');
+        if (!$newsfeed_cat) {
+            $this->log_message('Creating "newsfeed" category...');
+            $newsfeed_id = wp_insert_term('newsfeed', 'category', array(
+                'slug' => 'newsfeed',
+                'description' => 'News articles aggregated from RSS feeds'
+            ));
+
+            if (is_wp_error($newsfeed_id)) {
+                $this->log_message('Error creating newsfeed category: ' . $newsfeed_id->get_error_message());
+                return array('success' => false, 'message' => 'Failed to create newsfeed category');
+            }
+            $newsfeed_id = $newsfeed_id['term_id'];
+            $this->log_message('✓ Created "newsfeed" category (ID: ' . $newsfeed_id . ')');
+        } else {
+            $newsfeed_id = $newsfeed_cat->term_id;
+            $this->log_message('✓ Found existing "newsfeed" category (ID: ' . $newsfeed_id . ')');
+        }
+
+        // Get or create "Featured" category
+        $featured_cat = get_category_by_slug('featured');
+        if (!$featured_cat) {
+            $this->log_message('Creating "Featured" category...');
+            $featured_id = wp_insert_term('Featured', 'category', array(
+                'slug' => 'featured',
+                'description' => 'Featured daily editorial roundups'
+            ));
+
+            if (is_wp_error($featured_id)) {
+                $this->log_message('Error creating Featured category: ' . $featured_id->get_error_message());
+                return array('success' => false, 'message' => 'Failed to create Featured category');
+            }
+            $featured_id = $featured_id['term_id'];
+            $this->log_message('✓ Created "Featured" category (ID: ' . $featured_id . ')');
+        } else {
+            $featured_id = $featured_cat->term_id;
+            $this->log_message('✓ Found existing "Featured" category (ID: ' . $featured_id . ')');
+        }
+
+        // Get all EnviroLink aggregated posts
+        $args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        );
+
+        $posts = get_posts($args);
+        $total_posts = count($posts);
+
+        if ($total_posts == 0) {
+            $this->log_message('No EnviroLink posts found');
+            return array('success' => true, 'message' => 'No posts to categorize');
+        }
+
+        $this->log_message('Found ' . $total_posts . ' posts to categorize');
+
+        $newsfeed_count = 0;
+        $featured_count = 0;
+        $skipped_count = 0;
+
+        foreach ($posts as $index => $post) {
+            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $index + 1,
+                'total' => $total_posts,
+                'status' => 'Categorizing posts...'
+            ));
+
+            $this->log_message('Processing: ' . $post->post_title);
+
+            // Check if this is a daily roundup
+            $is_roundup = get_post_meta($post->ID, 'envirolink_is_roundup', true) === 'yes';
+
+            // Get current categories
+            $current_cats = wp_get_post_categories($post->ID);
+
+            // Determine which categories to add
+            $cats_to_add = array();
+            $added_labels = array();
+
+            // All aggregated posts get "newsfeed" category
+            if (!in_array($newsfeed_id, $current_cats)) {
+                $cats_to_add[] = $newsfeed_id;
+                $added_labels[] = 'newsfeed';
+            }
+
+            // Daily roundups also get "Featured" category
+            if ($is_roundup && !in_array($featured_id, $current_cats)) {
+                $cats_to_add[] = $featured_id;
+                $added_labels[] = 'Featured';
+            }
+
+            if (empty($cats_to_add)) {
+                $this->log_message('  → Already categorized, skipping');
+                $skipped_count++;
+                continue;
+            }
+
+            // Merge with existing categories (preserve them)
+            $new_cats = array_unique(array_merge($current_cats, $cats_to_add));
+
+            // Update the post categories
+            $result = wp_set_post_categories($post->ID, $new_cats);
+
+            if (is_wp_error($result)) {
+                $this->log_message('  → ✗ Failed to update categories');
+            } else {
+                $this->log_message('  → ✓ Added: ' . implode(', ', $added_labels));
+                if (in_array($newsfeed_id, $cats_to_add)) {
+                    $newsfeed_count++;
+                }
+                if (in_array($featured_id, $cats_to_add)) {
+                    $featured_count++;
+                }
+            }
+        }
+
+        $message_parts = array();
+        if ($newsfeed_count > 0) {
+            $message_parts[] = "$newsfeed_count posts categorized as 'newsfeed'";
+        }
+        if ($featured_count > 0) {
+            $message_parts[] = "$featured_count roundups categorized as 'Featured'";
+        }
+        if ($skipped_count > 0) {
+            $message_parts[] = "$skipped_count already categorized";
+        }
+
+        $message = 'Complete! ' . implode(', ', $message_parts);
+        $this->log_message('');
+        $this->log_message($message);
 
         $this->clear_progress();
 
@@ -2886,8 +3102,28 @@ class EnviroLink_AI_Aggregator {
                         }
                     }
 
+                    // Set categories: configured category + "newsfeed" category
+                    $categories = array();
                     if ($post_category) {
-                        $post_data['post_category'] = array($post_category);
+                        $categories[] = $post_category;
+                    }
+
+                    // Get or create "newsfeed" category
+                    $newsfeed_cat = get_category_by_slug('newsfeed');
+                    if (!$newsfeed_cat) {
+                        $newsfeed_id = wp_insert_term('newsfeed', 'category', array(
+                            'slug' => 'newsfeed',
+                            'description' => 'News articles aggregated from RSS feeds'
+                        ));
+                        if (!is_wp_error($newsfeed_id)) {
+                            $categories[] = $newsfeed_id['term_id'];
+                        }
+                    } else {
+                        $categories[] = $newsfeed_cat->term_id;
+                    }
+
+                    if (!empty($categories)) {
+                        $post_data['post_category'] = $categories;
                     }
 
                     // CRITICAL RACE CONDITION CHECK: One final check RIGHT before post creation
@@ -3711,8 +3947,42 @@ CONTENT: [rewritten content]";
             'post_author' => 1
         );
 
+        // Set categories: configured category + "newsfeed" + "Featured"
+        $categories = array();
         if ($post_category) {
-            $post_data['post_category'] = array($post_category);
+            $categories[] = $post_category;
+        }
+
+        // Get or create "newsfeed" category
+        $newsfeed_cat = get_category_by_slug('newsfeed');
+        if (!$newsfeed_cat) {
+            $newsfeed_id = wp_insert_term('newsfeed', 'category', array(
+                'slug' => 'newsfeed',
+                'description' => 'News articles aggregated from RSS feeds'
+            ));
+            if (!is_wp_error($newsfeed_id)) {
+                $categories[] = $newsfeed_id['term_id'];
+            }
+        } else {
+            $categories[] = $newsfeed_cat->term_id;
+        }
+
+        // Get or create "Featured" category
+        $featured_cat = get_category_by_slug('featured');
+        if (!$featured_cat) {
+            $featured_id = wp_insert_term('Featured', 'category', array(
+                'slug' => 'featured',
+                'description' => 'Featured daily editorial roundups'
+            ));
+            if (!is_wp_error($featured_id)) {
+                $categories[] = $featured_id['term_id'];
+            }
+        } else {
+            $categories[] = $featured_cat->term_id;
+        }
+
+        if (!empty($categories)) {
+            $post_data['post_category'] = $categories;
         }
 
         $post_id = wp_insert_post($post_data);
