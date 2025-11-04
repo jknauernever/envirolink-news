@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.18.0
+ * Version: 1.19.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.18.0');
+define('ENVIROLINK_VERSION', '1.19.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -274,6 +274,16 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
             update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
+
+            // Save roundup images collection
+            if (isset($_POST['roundup_images'])) {
+                $roundup_images = json_decode(stripslashes($_POST['roundup_images']), true);
+                if (is_array($roundup_images)) {
+                    // Validate all IDs are integers
+                    $roundup_images = array_map('absint', $roundup_images);
+                    update_option('envirolink_roundup_images', $roundup_images);
+                }
+            }
 
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
@@ -651,6 +661,42 @@ class EnviroLink_AI_Aggregator {
                                     Enable daily editorial roundup post
                                 </label>
                                 <p class="description">When enabled, an AI-generated editorial roundup of the past 24 hours' environmental news will be published automatically at 8:00 AM ET daily. The post will have a balanced, humanistic tone and appear as original content titled "Daily Environmental News Roundup by the EnviroLink Team - [Date]". The aggregator will run first to ensure all recent articles are included.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Roundup Featured Images
+                            </th>
+                            <td>
+                                <p class="description" style="margin-bottom: 15px;">Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.</p>
+
+                                <?php
+                                $roundup_images = get_option('envirolink_roundup_images', array());
+                                if (!empty($roundup_images)) {
+                                    echo '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-bottom: 15px;">';
+                                    foreach ($roundup_images as $image_id) {
+                                        $image_url = wp_get_attachment_image_url($image_id, 'thumbnail');
+                                        if ($image_url) {
+                                            echo '<div style="position: relative; border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">';
+                                            echo '<img src="' . esc_url($image_url) . '" style="width: 100%; height: 150px; object-fit: cover; display: block;">';
+                                            echo '<button type="button" class="envirolink-remove-image" data-image-id="' . $image_id . '" style="position: absolute; top: 5px; right: 5px; background: #dc3232; color: white; border: none; border-radius: 3px; padding: 5px 10px; cursor: pointer; font-size: 12px;">Remove</button>';
+                                            echo '</div>';
+                                        }
+                                    }
+                                    echo '</div>';
+                                }
+                                ?>
+
+                                <button type="button" id="envirolink_add_roundup_image" class="button">
+                                    <?php echo empty($roundup_images) ? 'Add Images to Collection' : 'Add More Images'; ?>
+                                </button>
+
+                                <p class="description" style="margin-top: 10px;">
+                                    <strong>Tip:</strong> Upload high-quality environmental images (nature, earth, climate themes). Currently <?php echo count($roundup_images); ?> image(s) in collection.
+                                </p>
+
+                                <input type="hidden" name="roundup_images" id="roundup_images" value="<?php echo esc_attr(json_encode($roundup_images)); ?>">
                             </td>
                         </tr>
                     </table>
@@ -1411,6 +1457,71 @@ class EnviroLink_AI_Aggregator {
                         statusDiv.html('<span style="color: red;">✗ Error checking for updates</span>');
                     }
                 });
+            });
+
+            // WordPress Media Uploader for Roundup Images
+            var roundupMediaFrame;
+            var roundupImages = <?php echo json_encode(get_option('envirolink_roundup_images', array())); ?>;
+
+            $('#envirolink_add_roundup_image').click(function(e) {
+                e.preventDefault();
+
+                // If media frame already exists, reopen it
+                if (roundupMediaFrame) {
+                    roundupMediaFrame.open();
+                    return;
+                }
+
+                // Create new media frame
+                roundupMediaFrame = wp.media({
+                    title: 'Select Roundup Featured Images',
+                    button: {
+                        text: 'Add to Collection'
+                    },
+                    multiple: true  // Allow multiple selection
+                });
+
+                // When images are selected
+                roundupMediaFrame.on('select', function() {
+                    var selection = roundupMediaFrame.state().get('selection');
+
+                    selection.each(function(attachment) {
+                        attachment = attachment.toJSON();
+                        if (roundupImages.indexOf(attachment.id) === -1) {
+                            roundupImages.push(attachment.id);
+                        }
+                    });
+
+                    // Update hidden input
+                    $('#roundup_images').val(JSON.stringify(roundupImages));
+
+                    // Reload page to show new images (WordPress way)
+                    $('form').first().submit();
+                });
+
+                // Open media frame
+                roundupMediaFrame.open();
+            });
+
+            // Remove image from collection
+            $(document).on('click', '.envirolink-remove-image', function(e) {
+                e.preventDefault();
+                var imageId = parseInt($(this).data('image-id'));
+                var index = roundupImages.indexOf(imageId);
+
+                if (index > -1) {
+                    roundupImages.splice(index, 1);
+                    $('#roundup_images').val(JSON.stringify(roundupImages));
+
+                    // Remove visual element
+                    $(this).closest('div').fadeOut(300, function() {
+                        $(this).remove();
+                        // Update count
+                        var count = roundupImages.length;
+                        $('.description strong').text('Tip:');
+                        $('.description').last().html('<strong>Tip:</strong> Upload high-quality environmental images (nature, earth, climate themes). Currently ' + count + ' image(s) in collection.');
+                    });
+                }
             });
         });
         </script>
@@ -3597,6 +3708,23 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
+
+            // Set random featured image from collection
+            $roundup_images = get_option('envirolink_roundup_images', array());
+            if (!empty($roundup_images)) {
+                // Randomly select one image from the collection
+                $random_image_id = $roundup_images[array_rand($roundup_images)];
+
+                // Verify image exists
+                if (wp_get_attachment_url($random_image_id)) {
+                    set_post_thumbnail($post_id, $random_image_id);
+                    error_log('EnviroLink: Set featured image (ID: ' . $random_image_id . ') for roundup');
+                } else {
+                    error_log('EnviroLink: Selected image ID ' . $random_image_id . ' does not exist');
+                }
+            } else {
+                error_log('EnviroLink: No roundup images in collection - skipping featured image');
+            }
 
             error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
         } else {
