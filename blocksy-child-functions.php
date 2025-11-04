@@ -198,6 +198,27 @@ add_action('blocksy:single:content:bottom', 'envirolink_single_metadata', 10);
 
 
 // ============================================
+// PART 4: Enqueue Custom Homepage Styles
+// ============================================
+
+/**
+ * Enqueue custom homepage CSS
+ */
+function envirolink_enqueue_homepage_styles() {
+    // Only load on the homepage
+    if (is_front_page()) {
+        wp_enqueue_style(
+            'envirolink-homepage',
+            get_stylesheet_directory_uri() . '/envirolink-homepage.css',
+            array(),
+            '1.0.0'
+        );
+    }
+}
+add_action('wp_enqueue_scripts', 'envirolink_enqueue_homepage_styles');
+
+
+// ============================================
 // PART 3: Alternative Hook (if above doesn't work)
 // ============================================
 
