@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.15.0
+ * Version: 1.15.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.15.0');
+define('ENVIROLINK_VERSION', '1.15.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -436,13 +436,33 @@ class EnviroLink_AI_Aggregator {
                         </tr>
                     </table>
 
-                    <p>
-                        <button type="button" class="button button-primary" id="run-now-btn">Run All Feeds Now</button>
-                        <button type="button" class="button" id="generate-roundup-btn" style="margin-left: 10px; background-color: #9c27b0; color: white; border-color: #7b1fa2;" title="Generate daily editorial roundup now (bypasses 8am schedule)">Generate Roundup Now</button>
-                        <button type="button" class="button" id="fix-dates-btn" style="margin-left: 10px; background-color: #ff9800; color: white; border-color: #f57c00;" title="Sync all post dates to match RSS publication dates">Fix Post Order</button>
-                        <button type="button" class="button" id="cleanup-duplicates-btn" style="margin-left: 10px; background-color: #e91e63; color: white; border-color: #c2185b;" title="Find and delete duplicate articles (keeps newest version)">Clean Up Duplicates</button>
-                        <span id="run-now-status" style="margin-left: 10px;"></span>
-                    </p>
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 14px; color: #23282d;">Feed Processing</h3>
+                        <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                            <button type="button" class="button button-primary" id="run-now-btn">
+                                <span class="dashicons dashicons-update" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Run All Feeds
+                            </button>
+                            <button type="button" class="button button-secondary" id="generate-roundup-btn" title="Generate daily editorial roundup (bypasses 8am schedule)">
+                                <span class="dashicons dashicons-media-document" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Generate Roundup
+                            </button>
+                        </div>
+
+                        <h3 style="margin-bottom: 12px; font-size: 14px; color: #23282d;">Maintenance Tools</h3>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" class="button" id="fix-dates-btn" title="Sync post dates to RSS publication dates">
+                                <span class="dashicons dashicons-calendar" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Fix Post Dates
+                            </button>
+                            <button type="button" class="button" id="cleanup-duplicates-btn" title="Find and delete duplicate articles">
+                                <span class="dashicons dashicons-trash" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Clean Duplicates
+                            </button>
+                        </div>
+
+                        <div id="run-now-status" style="margin-top: 12px;"></div>
+                    </div>
 
                     <!-- Progress Bar -->
                     <div id="envirolink-progress-container" style="display: none; margin-top: 15px;">
@@ -458,30 +478,36 @@ class EnviroLink_AI_Aggregator {
                         </div>
                     </div>
 
-                    <!-- Log Viewer (always visible) -->
-                    <div style="margin-top: 15px;">
-                        <button type="button" class="button button-small" id="toggle-log-btn">Show Detailed Log</button>
-                    </div>
-                    <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 11px; line-height: 1.5;">
-                        <div id="envirolink-log-content"></div>
+                    <!-- Log Viewer -->
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">
+                        <button type="button" class="button button-small" id="toggle-log-btn">
+                            <span class="dashicons dashicons-visibility" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle; margin-top: 2px;"></span>
+                            Show Detailed Log
+                        </button>
+                        <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6;">
+                            <div id="envirolink-log-content"></div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="card" style="flex: 1; max-width: 400px;">
-                    <h2>Quick Actions</h2>
+                <div class="card" style="flex: 1; max-width: 450px;">
+                    <h2 style="margin-top: 0;">Feed Actions</h2>
+                    <p class="description" style="margin-top: -8px; margin-bottom: 15px;">Run individual feeds or update their images</p>
                     <?php if (empty($feeds)): ?>
-                        <p style="color: #666;">No feeds configured yet.</p>
+                        <p style="color: #666; font-style: italic;">No feeds configured yet. Add feeds in the RSS Feeds tab below.</p>
                     <?php else: ?>
-                        <div style="max-height: 300px; overflow-y: auto;">
+                        <div style="max-height: 400px; overflow-y: auto; margin: -12px; padding: 12px;">
                             <?php foreach ($feeds as $index => $feed): ?>
-                                <div style="padding: 10px; border-bottom: 1px solid #ddd; display: flex; align-items: center; justify-content: space-between;">
-                                    <div style="flex: 1;">
-                                        <strong><?php echo esc_html($feed['name']); ?></strong>
+                                <div style="padding: 12px; margin-bottom: 8px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between;">
+                                    <div style="flex: 1; min-width: 0; margin-right: 10px;">
+                                        <div style="font-weight: 600; color: #23282d; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="<?php echo esc_attr($feed['name']); ?>">
+                                            <?php echo esc_html($feed['name']); ?>
+                                        </div>
                                         <?php if (!$feed['enabled']): ?>
-                                            <span style="color: #999; font-size: 11px;">(disabled)</span>
+                                            <span style="color: #999; font-size: 11px; font-style: italic;">Disabled</span>
                                         <?php endif; ?>
                                     </div>
-                                    <div style="display: flex; gap: 5px;">
+                                    <div style="display: flex; gap: 6px; flex-shrink: 0;">
                                         <button type="button" class="button button-small edit-schedule-btn"
                                                 data-index="<?php echo $index; ?>"
                                                 data-schedule-type="<?php echo esc_attr(isset($feed['schedule_type']) ? $feed['schedule_type'] : 'hourly'); ?>"
@@ -496,14 +522,13 @@ class EnviroLink_AI_Aggregator {
                                         <button type="button" class="button button-small update-images-btn"
                                                 data-index="<?php echo $index; ?>"
                                                 data-name="<?php echo esc_attr($feed['name']); ?>"
-                                                title="Re-download all images for this feed (high-res)"
-                                                style="background-color: #9b59b6; color: white; border-color: #8e44ad;">
+                                                title="Re-download images (last 20 posts)">
                                             <span class="dashicons dashicons-format-image" style="font-size: 16px; width: 16px; height: 16px;"></span>
                                         </button>
                                         <button type="button" class="button button-small button-primary run-feed-btn"
                                                 data-index="<?php echo $index; ?>"
                                                 data-name="<?php echo esc_attr($feed['name']); ?>"
-                                                title="Update this feed now"
+                                                title="Process this feed now"
                                                 <?php echo !$feed['enabled'] ? 'disabled' : ''; ?>>
                                             <span class="dashicons dashicons-update" style="font-size: 16px; width: 16px; height: 16px;"></span>
                                         </button>
@@ -1211,10 +1236,10 @@ class EnviroLink_AI_Aggregator {
 
                 if (logContainer.is(':visible')) {
                     logContainer.slideUp();
-                    btn.text('Show Detailed Log');
+                    btn.html('<span class="dashicons dashicons-visibility" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle; margin-top: 2px;"></span> Show Detailed Log');
                 } else {
                     logContainer.slideDown();
-                    btn.text('Hide Detailed Log');
+                    btn.html('<span class="dashicons dashicons-hidden" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle; margin-top: 2px;"></span> Hide Detailed Log');
                     // Auto-scroll to bottom
                     setTimeout(function() {
                         logContainer[0].scrollTop = logContainer[0].scrollHeight;
