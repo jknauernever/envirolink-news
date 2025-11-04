@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.14.6
+ * Version: 1.15.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.14.6');
+define('ENVIROLINK_VERSION', '1.15.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2301,10 +2301,11 @@ class EnviroLink_AI_Aggregator {
         $lock_key = 'envirolink_processing_lock';
         $is_locked = get_transient($lock_key);
 
-        if ($is_locked && !$manual_run) {
-            // Another instance is running - skip this execution
-            error_log('EnviroLink: Skipping CRON run - another instance is already processing');
-            return array('success' => false, 'message' => 'Another instance is already running');
+        if ($is_locked) {
+            // Another instance is running - skip this execution (applies to ALL runs)
+            $run_type = $manual_run ? 'manual run' : 'CRON run';
+            error_log('EnviroLink: Skipping ' . $run_type . ' - another instance is already processing');
+            return array('success' => false, 'message' => 'Another instance is already running. Please wait a few minutes and try again.');
         }
 
         // Set lock for 10 minutes (600 seconds)
@@ -2444,12 +2445,14 @@ class EnviroLink_AI_Aggregator {
                 } else {
                     $this->log_message('→ No exact match, checking normalized URLs...');
                     // Try to find posts with similar normalized URLs
+                    // CRITICAL: Use ID ordering (not date) to get recently-ADDED posts
+                    // Posts may have old publication dates but were recently added to WordPress
                     $all_posts = get_posts(array(
                         'post_type' => 'post',
                         'meta_key' => 'envirolink_source_url',
                         'meta_compare' => 'EXISTS',
-                        'posts_per_page' => 100, // Check recent posts
-                        'orderby' => 'date',
+                        'posts_per_page' => 500, // Check last 500 posts added to WordPress
+                        'orderby' => 'ID', // Order by when added, not publication date
                         'order' => 'DESC'
                     ));
 
