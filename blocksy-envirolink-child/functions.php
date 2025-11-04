@@ -14,28 +14,6 @@ if (!defined('ABSPATH')) {
 }
 
 // ============================================
-// AUTO-UPDATE FROM GITHUB
-// ============================================
-
-// Load Plugin Update Checker library (works for themes too!)
-$puc_path = get_stylesheet_directory() . '/plugin-update-checker/plugin-update-checker.php';
-if (file_exists($puc_path)) {
-    require $puc_path;
-
-    // Initialize theme update checker using full namespace (no 'use' statement needed)
-    if (class_exists('YahnisElsts\PluginUpdateChecker\v5\PucFactory')) {
-        $envirolink_theme_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-            'https://github.com/jknauernever/envirolink-news/',
-            get_stylesheet_directory() . '/style.css', // Theme's main file
-            'blocksy-envirolink-child' // Theme slug
-        );
-
-        // Set the branch to check for updates
-        $envirolink_theme_update_checker->setBranch('main');
-    }
-}
-
-// ============================================
 // PARENT THEME CHECK
 // ============================================
 
