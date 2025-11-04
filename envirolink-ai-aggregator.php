@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.17.0
+ * Version: 1.16.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.17.0');
+define('ENVIROLINK_VERSION', '1.16.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3422,67 +3422,6 @@ CONTENT: [rewritten content]";
     }
 
     /**
-     * Get or upload the EnviroLink logo for roundup posts
-     * Checks if logo already exists in media library, otherwise uploads it
-     * @return int|false Attachment ID or false on failure
-     */
-    private function get_or_upload_roundup_logo() {
-        // Check if we've already uploaded the logo (stored in wp_options)
-        $existing_logo_id = get_option('envirolink_roundup_logo_id');
-
-        if ($existing_logo_id) {
-            // Verify the attachment still exists
-            if (wp_get_attachment_url($existing_logo_id)) {
-                return $existing_logo_id;
-            } else {
-                // Attachment was deleted, remove the stored ID
-                delete_option('envirolink_roundup_logo_id');
-            }
-        }
-
-        // Look for logo file in plugin directory
-        $logo_path = ENVIROLINK_PLUGIN_DIR . 'envirolink-roundup-logo.png';
-
-        if (!file_exists($logo_path)) {
-            error_log('EnviroLink: Roundup logo not found at: ' . $logo_path);
-            error_log('EnviroLink: Please upload envirolink-roundup-logo.png to the plugin directory');
-            return false;
-        }
-
-        // Upload to media library
-        require_once(ABSPATH . 'wp-admin/includes/file.php');
-        require_once(ABSPATH . 'wp-admin/includes/image.php');
-        require_once(ABSPATH . 'wp-admin/includes/media.php');
-
-        $file_array = array(
-            'name' => 'envirolink-roundup-logo.png',
-            'tmp_name' => $logo_path
-        );
-
-        // Copy file to temp location (media_handle_sideload needs a tmp file)
-        $tmp_path = wp_tempnam('envirolink-roundup-logo.png');
-        copy($logo_path, $tmp_path);
-        $file_array['tmp_name'] = $tmp_path;
-
-        // Upload to media library
-        $attachment_id = media_handle_sideload($file_array, 0, 'EnviroLink Daily Roundup Logo');
-
-        // Clean up temp file
-        @unlink($tmp_path);
-
-        if (is_wp_error($attachment_id)) {
-            error_log('EnviroLink: Failed to upload roundup logo: ' . $attachment_id->get_error_message());
-            return false;
-        }
-
-        // Store attachment ID for future use
-        update_option('envirolink_roundup_logo_id', $attachment_id);
-        error_log('EnviroLink: Uploaded roundup logo to media library (Attachment ID: ' . $attachment_id . ')');
-
-        return $attachment_id;
-    }
-
-    /**
      * Generate daily editorial roundup
      * Called by CRON at 8am ET daily
      * @param bool $manual_run If true, bypasses the enabled check (for manual testing)
@@ -3582,13 +3521,6 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
-
-            // Set EnviroLink logo as featured image
-            $logo_attachment_id = $this->get_or_upload_roundup_logo();
-            if ($logo_attachment_id) {
-                set_post_thumbnail($post_id, $logo_attachment_id);
-                error_log('EnviroLink: Set roundup logo as featured image (Attachment ID: ' . $logo_attachment_id . ')');
-            }
 
             error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
         } else {
