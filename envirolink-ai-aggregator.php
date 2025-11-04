@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.16.0
+ * Version: 1.17.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.16.0');
+define('ENVIROLINK_VERSION', '1.17.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2515,20 +2515,58 @@ class EnviroLink_AI_Aggregator {
                     if (empty($existing)) {
                         $this->log_message('→ No URL match found');
 
-                        // PHASE 2: Check for similar titles (catches same article with different URL)
-                        $this->log_message('→ Checking for similar titles...');
-                        $original_title_lower = strtolower(trim($original_title));
+                        // PHASE 2: Check for same image URL from same source (CRITICAL - SIMPLE CHECK!)
+                        // If same source + same image = DEFINITELY the same article
+                        $this->log_message('→ Checking for same image URL from this source...');
+                        $current_image_url = $this->extract_feed_image($item);
 
-                        foreach ($all_posts as $post) {
-                            $existing_title_lower = strtolower(trim($post->post_title));
-                            $similarity = $this->calculate_title_similarity($original_title_lower, $existing_title_lower);
+                        if ($current_image_url) {
+                            $normalized_image_url = $this->normalize_url($current_image_url);
+                            $this->log_message('   Image URL: ' . $current_image_url);
 
-                            if ($similarity >= 80) { // 80% or more similar = likely duplicate
-                                $existing = array($post);
-                                $this->log_message('→ ✓ Found duplicate via title similarity (' . round($similarity) . '% match)');
-                                $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ')');
-                                $this->log_message('   New: "' . $original_title . '"');
-                                break;
+                            foreach ($all_posts as $post) {
+                                // Only check posts from the SAME source
+                                $post_source = get_post_meta($post->ID, 'envirolink_source_name', true);
+                                if ($post_source !== $feed['name']) {
+                                    continue; // Skip posts from other sources
+                                }
+
+                                // Get the featured image URL for this post
+                                $post_thumbnail_id = get_post_thumbnail_id($post->ID);
+                                if ($post_thumbnail_id) {
+                                    $post_image_url = wp_get_attachment_url($post_thumbnail_id);
+                                    if ($post_image_url) {
+                                        $normalized_post_image = $this->normalize_url($post_image_url);
+
+                                        if ($normalized_image_url === $normalized_post_image) {
+                                            $existing = array($post);
+                                            $this->log_message('→ ✓ Found duplicate via SAME IMAGE from same source!');
+                                            $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ')');
+                                            $this->log_message('   New: "' . $original_title . '"');
+                                            $this->log_message('   Same image = SAME ARTICLE');
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // PHASE 3: Check for similar titles (catches same article with different URL)
+                        if (empty($existing)) {
+                            $this->log_message('→ Checking for similar titles...');
+                            $original_title_lower = strtolower(trim($original_title));
+
+                            foreach ($all_posts as $post) {
+                                $existing_title_lower = strtolower(trim($post->post_title));
+                                $similarity = $this->calculate_title_similarity($original_title_lower, $existing_title_lower);
+
+                                if ($similarity >= 80) { // 80% or more similar = likely duplicate
+                                    $existing = array($post);
+                                    $this->log_message('→ ✓ Found duplicate via title similarity (' . round($similarity) . '% match)');
+                                    $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ')');
+                                    $this->log_message('   New: "' . $original_title . '"');
+                                    break;
+                                }
                             }
                         }
 
