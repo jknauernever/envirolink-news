@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.17.0
+ * Version: 1.18.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.17.0');
+define('ENVIROLINK_VERSION', '1.18.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -272,6 +272,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
             update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
+            update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
 
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
@@ -622,6 +623,20 @@ class EnviroLink_AI_Aggregator {
                                     Randomize order of posts within the same day
                                 </label>
                                 <p class="description">When enabled, posts from the same day will appear in random order instead of being clustered by source. Prevents all Guardian posts appearing together, then all Mongabay posts, etc. Does not modify timestamps.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Auto-Cleanup Duplicates
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="auto_cleanup_duplicates" id="auto_cleanup_duplicates"
+                                           <?php checked(get_option('envirolink_auto_cleanup_duplicates', 'yes'), 'yes'); ?> />
+                                    Automatically clean up duplicates after feed import
+                                </label>
+                                <p class="description">When enabled, runs the duplicate cleanup process automatically after each feed import. This catches any duplicates that slip through the initial detection (URL normalization, title similarity, same images). Uses the same proven logic as the "Clean Duplicates" button. <strong>Recommended: Leave enabled.</strong></p>
                             </td>
                         </tr>
 
@@ -2836,6 +2851,29 @@ class EnviroLink_AI_Aggregator {
         }
         if (!empty($failed_feeds)) {
             $message .= ". Warning: Failed to fetch " . count($failed_feeds) . " feed(s): " . implode('; ', $failed_feeds);
+        }
+
+        // Run automatic duplicate cleanup if enabled
+        if (get_option('envirolink_auto_cleanup_duplicates', 'yes') === 'yes') {
+            $this->log_message('');
+            $this->log_message('=== Running Automatic Duplicate Cleanup ===');
+            $this->log_message('Scanning for any duplicates that slipped through...');
+
+            $cleanup_result = $this->cleanup_duplicates();
+
+            if ($cleanup_result['success']) {
+                $this->log_message('✓ Auto-cleanup complete: ' . $cleanup_result['message']);
+
+                // Add cleanup results to main message if any duplicates were found
+                if (strpos($cleanup_result['message'], 'Deleted') !== false) {
+                    $message .= '. ' . $cleanup_result['message'];
+                }
+            } else {
+                $this->log_message('✗ Auto-cleanup failed: ' . $cleanup_result['message']);
+            }
+        } else {
+            $this->log_message('');
+            $this->log_message('(Automatic duplicate cleanup is disabled)');
         }
 
         // Clear progress tracking
