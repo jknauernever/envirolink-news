@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.14.3
+ * Version: 1.14.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.14.3');
+define('ENVIROLINK_VERSION', '1.14.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1618,8 +1618,8 @@ class EnviroLink_AI_Aggregator {
         }
 
         try {
-            // Call the generate_daily_roundup function
-            $this->generate_daily_roundup();
+            // Call the generate_daily_roundup function with manual_run = true to bypass enabled check
+            $this->generate_daily_roundup(true);
 
             // Check if it succeeded by looking for the most recent roundup post
             $recent_roundup = get_posts(array(
@@ -3331,15 +3331,16 @@ CONTENT: [rewritten content]";
     /**
      * Generate daily editorial roundup
      * Called by CRON at 8am ET daily
+     * @param bool $manual_run If true, bypasses the enabled check (for manual testing)
      */
-    public function generate_daily_roundup() {
-        // Check if feature is enabled
-        if (get_option('envirolink_daily_roundup_enabled', 'no') !== 'yes') {
+    public function generate_daily_roundup($manual_run = false) {
+        // Check if feature is enabled (skip check for manual runs)
+        if (!$manual_run && get_option('envirolink_daily_roundup_enabled', 'no') !== 'yes') {
             error_log('EnviroLink: Daily roundup skipped - feature is disabled');
             return;
         }
 
-        error_log('EnviroLink: Starting daily roundup generation');
+        error_log('EnviroLink: Starting daily roundup generation' . ($manual_run ? ' (manual run)' : ''));
 
         // Step 1: Run the feed aggregator first to get latest articles
         error_log('EnviroLink: Running feed aggregator...');
