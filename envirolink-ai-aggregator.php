@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.15.1
+ * Version: 1.16.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.15.1');
+define('ENVIROLINK_VERSION', '1.16.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2324,17 +2324,33 @@ class EnviroLink_AI_Aggregator {
         // CRITICAL: Prevent concurrent executions that cause duplicates
         // Check if another instance is already running
         $lock_key = 'envirolink_processing_lock';
-        $is_locked = get_transient($lock_key);
+        $lock_data = get_transient($lock_key);
 
-        if ($is_locked) {
+        if ($lock_data) {
             // Another instance is running - skip this execution (applies to ALL runs)
             $run_type = $manual_run ? 'manual run' : 'CRON run';
+            $lock_age = time() - $lock_data['start_time'];
+            $lock_pid = isset($lock_data['pid']) ? $lock_data['pid'] : 'unknown';
+
             error_log('EnviroLink: Skipping ' . $run_type . ' - another instance is already processing');
-            return array('success' => false, 'message' => 'Another instance is already running. Please wait a few minutes and try again.');
+            error_log('EnviroLink: Lock held by PID ' . $lock_pid . ' for ' . $lock_age . ' seconds');
+
+            return array(
+                'success' => false,
+                'message' => 'Another instance is already running (PID: ' . $lock_pid . ', ' . $lock_age . 's). Please wait and try again.'
+            );
         }
 
-        // Set lock for 10 minutes (600 seconds)
-        set_transient($lock_key, time(), 600);
+        // Set lock for 2 minutes (120 seconds) - shorter timeout prevents long waits if process crashes
+        // Store start time and process ID for debugging
+        $lock_data = array(
+            'start_time' => time(),
+            'pid' => getmypid(),
+            'type' => $manual_run ? 'manual' : 'cron'
+        );
+        set_transient($lock_key, $lock_data, 120);
+
+        error_log('EnviroLink: Lock acquired (PID: ' . $lock_data['pid'] . ', Type: ' . $lock_data['type'] . ')');
 
         // Increase resource limits for long-running feed processing
         // Prevents timeouts when processing multiple articles with AI + image scraping
@@ -2450,7 +2466,9 @@ class EnviroLink_AI_Aggregator {
                 $original_link = $item->get_permalink();
                 $original_title = $item->get_title();
 
-                $this->log_message('Checking article: ' . $original_title);
+                // CRITICAL: Log with microsecond timestamp to detect race conditions
+                $timestamp = date('H:i:s') . '.' . substr(microtime(), 2, 3);
+                $this->log_message('[' . $timestamp . '] Checking article: ' . $original_title);
                 $this->log_message('→ Source URL: ' . $original_link);
 
                 // Use normalized URL for better duplicate detection
@@ -2495,7 +2513,28 @@ class EnviroLink_AI_Aggregator {
                     }
 
                     if (empty($existing)) {
-                        $this->log_message('→ No duplicate found - will create new post');
+                        $this->log_message('→ No URL match found');
+
+                        // PHASE 2: Check for similar titles (catches same article with different URL)
+                        $this->log_message('→ Checking for similar titles...');
+                        $original_title_lower = strtolower(trim($original_title));
+
+                        foreach ($all_posts as $post) {
+                            $existing_title_lower = strtolower(trim($post->post_title));
+                            $similarity = $this->calculate_title_similarity($original_title_lower, $existing_title_lower);
+
+                            if ($similarity >= 80) { // 80% or more similar = likely duplicate
+                                $existing = array($post);
+                                $this->log_message('→ ✓ Found duplicate via title similarity (' . round($similarity) . '% match)');
+                                $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ')');
+                                $this->log_message('   New: "' . $original_title . '"');
+                                break;
+                            }
+                        }
+
+                        if (empty($existing)) {
+                            $this->log_message('→ No duplicate found - will create new post');
+                        }
                     }
                 }
 
@@ -2673,6 +2712,30 @@ class EnviroLink_AI_Aggregator {
                         $post_data['post_category'] = array($post_category);
                     }
 
+                    // CRITICAL RACE CONDITION CHECK: One final check RIGHT before post creation
+                    // This catches cases where another process passed the duplicate check but
+                    // created the post while we were processing AI/images
+                    $this->log_message('→ Final safety check before post creation...');
+                    $final_check = get_posts(array(
+                        'post_type' => 'post',
+                        'meta_query' => array(
+                            array(
+                                'key' => 'envirolink_source_url',
+                                'value' => $original_link,
+                                'compare' => '='
+                            )
+                        ),
+                        'posts_per_page' => 1
+                    ));
+
+                    if (!empty($final_check)) {
+                        $this->log_message('→ ⚠ RACE CONDITION DETECTED! Post was created by another process during AI processing.');
+                        $this->log_message('   Existing Post ID: ' . $final_check[0]->ID . ' - "' . $final_check[0]->post_title . '"');
+                        $this->log_message('   SKIPPING creation to prevent duplicate.');
+                        $total_skipped++;
+                        continue; // Skip this article
+                    }
+
                     $post_id = wp_insert_post($post_data);
 
                     if ($post_id) {
@@ -2742,6 +2805,8 @@ class EnviroLink_AI_Aggregator {
 
         // Release the processing lock
         delete_transient('envirolink_processing_lock');
+        $lock_duration = time() - $lock_data['start_time'];
+        error_log('EnviroLink: Lock released (PID: ' . $lock_data['pid'] . ', Duration: ' . $lock_duration . 's)');
 
         return array(
             'success' => true,
