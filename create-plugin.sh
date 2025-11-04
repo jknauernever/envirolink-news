@@ -18,8 +18,8 @@ mkdir -p "$PLUGIN_DIR"
 
 # Copy plugin files
 echo "Copying plugin files..."
-cp -r envirolink-ai-aggregator.php "$PLUGIN_DIR/"
-cp -r plugin-update-checker/ "$PLUGIN_DIR/"
+cp envirolink-ai-aggregator.php "$PLUGIN_DIR/"
+cp -r plugin-update-checker "$PLUGIN_DIR/"
 cp README.md "$PLUGIN_DIR/"
 cp CLAUDE.md "$PLUGIN_DIR/"
 cp INSTALLATION-GUIDE.md "$PLUGIN_DIR/"
