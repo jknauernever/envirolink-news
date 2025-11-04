@@ -155,10 +155,17 @@ get_header();
 
             <!-- Section Headers with Categories -->
             <div class="envirolink-section-tabs">
-                <a href="#" class="envirolink-tab active" data-category="all">All Stories</a>
-                <a href="<?php echo get_category_link(get_cat_ID('Politics')); ?>" class="envirolink-tab">Politics</a>
-                <a href="<?php echo get_category_link(get_cat_ID('Hollywood')); ?>" class="envirolink-tab">Climate</a>
-                <a href="<?php echo get_category_link(get_cat_ID('Finance')); ?>" class="envirolink-tab">Conservation</a>
+                <a href="<?php echo home_url('/'); ?>" class="envirolink-tab active">All Stories</a>
+                <?php
+                // Display category tabs only if categories exist
+                $category_tabs = array('Climate', 'Conservation', 'Wildlife', 'Energy');
+                foreach ($category_tabs as $cat_name) {
+                    $cat_id = get_cat_ID($cat_name);
+                    if ($cat_id > 0) {
+                        echo '<a href="' . esc_url(get_category_link($cat_id)) . '" class="envirolink-tab">' . esc_html($cat_name) . '</a>';
+                    }
+                }
+                ?>
             </div>
 
             <!-- News Grid -->

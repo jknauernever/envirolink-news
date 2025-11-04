@@ -14,6 +14,68 @@ if (!defined('ABSPATH')) {
 }
 
 // ============================================
+// AUTO-UPDATE FROM GITHUB
+// ============================================
+
+// Load Plugin Update Checker library (works for themes too!)
+require get_stylesheet_directory() . '/plugin-update-checker/plugin-update-checker.php';
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+
+// Initialize theme update checker
+$envirolink_theme_update_checker = PucFactory::buildUpdateChecker(
+    'https://github.com/jknauernever/envirolink-news/',
+    get_stylesheet_directory() . '/style.css', // Theme's main file
+    'blocksy-envirolink-child' // Theme slug
+);
+
+// Set the branch to check for updates
+$envirolink_theme_update_checker->setBranch('main');
+
+// ============================================
+// PARENT THEME CHECK
+// ============================================
+
+/**
+ * Check if Blocksy parent theme is installed and active
+ */
+function blocksy_envirolink_check_parent_theme() {
+    if (!function_exists('wp_get_theme')) {
+        return;
+    }
+
+    $theme = wp_get_theme();
+
+    // Check if this is a child theme and if parent exists
+    if ($theme->parent() && $theme->get_template() === 'blocksy') {
+        // Check if parent theme directory exists
+        $parent_theme = $theme->parent();
+        if (!$parent_theme->errors()) {
+            return; // All good!
+        }
+    }
+
+    // Parent theme not found - show admin notice
+    add_action('admin_notices', 'blocksy_envirolink_parent_theme_notice');
+}
+add_action('after_setup_theme', 'blocksy_envirolink_check_parent_theme');
+
+/**
+ * Display admin notice if parent theme is missing
+ */
+function blocksy_envirolink_parent_theme_notice() {
+    ?>
+    <div class="notice notice-error">
+        <p><strong>Blocksy EnviroLink Child Theme:</strong> This is a child theme that requires the <strong>Blocksy</strong> parent theme to be installed.</p>
+        <p>
+            <a href="<?php echo admin_url('theme-install.php?search=blocksy'); ?>" class="button button-primary">Install Blocksy Theme</a>
+            or
+            <a href="<?php echo admin_url('themes.php'); ?>" class="button">Return to Themes</a>
+        </p>
+    </div>
+    <?php
+}
+
+// ============================================
 // THEME SETUP
 // ============================================
 
