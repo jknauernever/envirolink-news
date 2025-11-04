@@ -58,6 +58,36 @@ function blocksy_envirolink_parent_theme_notice() {
 }
 
 // ============================================
+// CUSTOMIZER SETTINGS
+// ============================================
+
+/**
+ * Add customizer options for EnviroLink features
+ */
+function envirolink_customize_register($wp_customize) {
+    // Add EnviroLink Settings Section
+    $wp_customize->add_section('envirolink_settings', array(
+        'title'    => 'EnviroLink Display Options',
+        'priority' => 30,
+    ));
+
+    // Show/Hide Source Labels
+    $wp_customize->add_setting('envirolink_show_source', array(
+        'default'           => true,
+        'sanitize_callback' => 'wp_validate_boolean',
+        'transport'         => 'refresh',
+    ));
+
+    $wp_customize->add_control('envirolink_show_source', array(
+        'label'    => 'Show Article Source Labels',
+        'description' => 'Display source name (e.g., "Mongabay", "The Guardian") before article titles',
+        'section'  => 'envirolink_settings',
+        'type'     => 'checkbox',
+    ));
+}
+add_action('customize_register', 'envirolink_customize_register');
+
+// ============================================
 // THEME SETUP
 // ============================================
 

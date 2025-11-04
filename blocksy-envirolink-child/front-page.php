@@ -130,7 +130,7 @@ get_header();
                                 <a href="<?php the_permalink(); ?>"><?php the_title(); ?></a>
                             </h4>
                             <div class="envirolink-headline-meta">
-                                <?php if ($source_name) : ?>
+                                <?php if ($source_name && get_theme_mod('envirolink_show_source', true)) : ?>
                                     <span class="envirolink-source"><?php echo esc_html($source_name); ?></span>
                                     <span class="envirolink-separator">•</span>
                                 <?php endif; ?>
@@ -207,7 +207,7 @@ get_header();
 
                     <div class="envirolink-grid-content">
                         <div class="envirolink-grid-meta">
-                            <?php if ($source_name) : ?>
+                            <?php if ($source_name && get_theme_mod('envirolink_show_source', true)) : ?>
                                 <span class="envirolink-source"><?php echo esc_html($source_name); ?></span>
                             <?php endif; ?>
                         </div>
