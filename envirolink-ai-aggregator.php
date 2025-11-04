@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.19.0
+ * Version: 1.20.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.19.0');
+define('ENVIROLINK_VERSION', '1.20.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -274,6 +274,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
             update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
+            update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
 
             // Save roundup images collection
             if (isset($_POST['roundup_images'])) {
@@ -669,7 +670,19 @@ class EnviroLink_AI_Aggregator {
                                 Roundup Featured Images
                             </th>
                             <td>
-                                <p class="description" style="margin-bottom: 15px;">Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.</p>
+                                <label style="display: block; margin-bottom: 15px;">
+                                    <input type="checkbox" name="roundup_auto_fetch_unsplash" id="roundup_auto_fetch_unsplash"
+                                           <?php checked(get_option('envirolink_roundup_auto_fetch_unsplash', 'no'), 'yes'); ?> />
+                                    <strong>Auto-fetch from Unsplash</strong> - Automatically get high-quality environmental images from Unsplash (free stock photos)
+                                </label>
+                                <p class="description" style="margin-bottom: 15px;">
+                                    <strong>Option 1:</strong> Auto-fetch from Unsplash (keywords: environment, climate, nature, earth)<br>
+                                    <strong>Option 2:</strong> Upload your own collection below and randomly select from it<br>
+                                    <strong>Option 3:</strong> Enable both - uses Unsplash if your collection is empty
+                                </p>
+
+                                <div style="border-top: 1px solid #ddd; padding-top: 15px; margin-top: 15px;">
+                                    <p class="description" style="margin-bottom: 15px;"><strong>Manual Collection:</strong> Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.</p>
 
                                 <?php
                                 $roundup_images = get_option('envirolink_roundup_images', array());
@@ -697,6 +710,7 @@ class EnviroLink_AI_Aggregator {
                                 </p>
 
                                 <input type="hidden" name="roundup_images" id="roundup_images" value="<?php echo esc_attr(json_encode($roundup_images)); ?>">
+                                </div>
                             </td>
                         </tr>
                     </table>
@@ -3709,21 +3723,43 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
-            // Set random featured image from collection
+            // Set featured image - try Unsplash first if enabled, then collection
+            $image_id = false;
+            $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
-            if (!empty($roundup_images)) {
+
+            if ($auto_fetch_unsplash) {
+                // Try to fetch from Unsplash
+                error_log('EnviroLink: Attempting to fetch image from Unsplash...');
+                $image_id = $this->fetch_unsplash_image();
+
+                if ($image_id) {
+                    error_log('EnviroLink: Using Unsplash image (ID: ' . $image_id . ')');
+                } else {
+                    error_log('EnviroLink: Unsplash fetch failed, falling back to collection');
+                }
+            }
+
+            // Fallback to manual collection if Unsplash disabled or failed
+            if (!$image_id && !empty($roundup_images)) {
                 // Randomly select one image from the collection
-                $random_image_id = $roundup_images[array_rand($roundup_images)];
+                $image_id = $roundup_images[array_rand($roundup_images)];
 
                 // Verify image exists
-                if (wp_get_attachment_url($random_image_id)) {
-                    set_post_thumbnail($post_id, $random_image_id);
-                    error_log('EnviroLink: Set featured image (ID: ' . $random_image_id . ') for roundup');
+                if (wp_get_attachment_url($image_id)) {
+                    error_log('EnviroLink: Using collection image (ID: ' . $image_id . ')');
                 } else {
-                    error_log('EnviroLink: Selected image ID ' . $random_image_id . ' does not exist');
+                    error_log('EnviroLink: Selected collection image ID ' . $image_id . ' does not exist');
+                    $image_id = false;
                 }
+            }
+
+            // Set the featured image if we have one
+            if ($image_id) {
+                set_post_thumbnail($post_id, $image_id);
+                error_log('EnviroLink: Set featured image (ID: ' . $image_id . ') for roundup');
             } else {
-                error_log('EnviroLink: No roundup images in collection - skipping featured image');
+                error_log('EnviroLink: No featured image set - Unsplash disabled and collection empty');
             }
 
             error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
@@ -3812,6 +3848,88 @@ Do NOT include a title - just the content.";
 
         // If parsing fails, return the raw content
         return $text;
+    }
+
+    /**
+     * Fetch environmental image from Unsplash API
+     * Returns attachment ID or false
+     */
+    private function fetch_unsplash_image() {
+        // Random environmental keywords for variety
+        $keywords = array(
+            'nature environment',
+            'climate earth',
+            'forest conservation',
+            'ocean wildlife',
+            'sustainable planet',
+            'green nature',
+            'environmental landscape'
+        );
+
+        $query = $keywords[array_rand($keywords)];
+
+        // Fetch from Unsplash API
+        $response = wp_remote_get('https://api.unsplash.com/photos/random?' . http_build_query(array(
+            'query' => $query,
+            'orientation' => 'landscape',
+            'content_filter' => 'high'
+        )), array(
+            'timeout' => 15,
+            'headers' => array(
+                'Accept-Version' => 'v1'
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('EnviroLink: Unsplash API error: ' . $response->get_error_message());
+            return false;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!isset($body['urls']['regular'])) {
+            error_log('EnviroLink: Unsplash response missing image URL');
+            return false;
+        }
+
+        $image_url = $body['urls']['regular'];
+        $photographer = isset($body['user']['name']) ? $body['user']['name'] : 'Unknown';
+        $photo_link = isset($body['links']['html']) ? $body['links']['html'] : '';
+
+        error_log('EnviroLink: Fetched Unsplash image from ' . $photographer . ' (query: ' . $query . ')');
+
+        // Download image
+        $tmp = download_url($image_url);
+
+        if (is_wp_error($tmp)) {
+            error_log('EnviroLink: Failed to download Unsplash image: ' . $tmp->get_error_message());
+            return false;
+        }
+
+        // Prepare file array for WordPress
+        $file_array = array(
+            'name' => 'unsplash-' . md5($image_url) . '.jpg',
+            'tmp_name' => $tmp
+        );
+
+        // Upload to media library
+        $id = media_handle_sideload($file_array, 0, 'Environmental image by ' . $photographer);
+
+        // Clean up temp file
+        @unlink($tmp);
+
+        if (is_wp_error($id)) {
+            error_log('EnviroLink: Failed to upload Unsplash image: ' . $id->get_error_message());
+            return false;
+        }
+
+        // Add Unsplash credit to image metadata
+        update_post_meta($id, '_unsplash_photographer', $photographer);
+        update_post_meta($id, '_unsplash_url', $photo_link);
+
+        error_log('EnviroLink: Uploaded Unsplash image (ID: ' . $id . ')');
+
+        return $id;
     }
 }
 
