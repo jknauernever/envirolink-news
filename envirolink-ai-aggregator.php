@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.24.0
+ * Version: 1.25.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.24.0');
+define('ENVIROLINK_VERSION', '1.25.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -62,7 +62,10 @@ class EnviroLink_AI_Aggregator {
         // Cron hooks
         add_action('envirolink_fetch_feeds', array($this, 'fetch_and_process_feeds'));
         add_action('envirolink_daily_roundup', array($this, 'generate_daily_roundup'));
-        
+
+        // Frontend styling for Unsplash attribution captions
+        add_action('wp_head', array($this, 'output_caption_css'));
+
         // AJAX handlers
         add_action('wp_ajax_envirolink_run_now', array($this, 'ajax_run_now'));
         add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
@@ -712,7 +715,10 @@ class EnviroLink_AI_Aggregator {
                                 </p>
 
                                 <div style="border-top: 1px solid #ddd; padding-top: 15px; margin-top: 15px;">
-                                    <p class="description" style="margin-bottom: 15px;"><strong>Manual Collection:</strong> Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.</p>
+                                    <p class="description" style="margin-bottom: 15px;">
+                                        <strong>Manual Collection:</strong> Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.<br>
+                                        <strong>Attribution:</strong> Add photo credits by editing each image in Media Library → Caption field (e.g., "Photo by John Doe")
+                                    </p>
 
                                 <?php
                                 $roundup_images = get_option('envirolink_roundup_images', array());
@@ -4317,13 +4323,27 @@ CONTENT: [rewritten content]";
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
-            // STRATEGY 1: Unsplash (if enabled)
+            // STRATEGY 1: Unsplash (if enabled) - COMPLIANT WITH API GUIDELINES
             if ($auto_fetch_unsplash) {
                 error_log('EnviroLink: [ROUNDUP IMAGE] Attempting to fetch from Unsplash...');
-                $image_id = $this->fetch_unsplash_image();
+                $unsplash_data = $this->fetch_unsplash_image();
 
-                if ($image_id) {
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using Unsplash image (ID: ' . $image_id . ')');
+                if ($unsplash_data) {
+                    // Create WordPress attachment from external URL (hotlink - no download)
+                    $image_id = $this->create_unsplash_attachment($unsplash_data);
+
+                    if ($image_id) {
+                        // Store attribution data on the POST (for display)
+                        update_post_meta($post_id, '_unsplash_attribution', array(
+                            'photographer_name' => $unsplash_data['photographer_name'],
+                            'photographer_username' => $unsplash_data['photographer_username'],
+                            'photo_link' => $unsplash_data['photo_link'],
+                            'unsplash_link' => $unsplash_data['unsplash_link']
+                        ));
+                        error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using Unsplash image (ID: ' . $image_id . ') - hotlinked & compliant');
+                    } else {
+                        error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Failed to create Unsplash attachment');
+                    }
                 } else {
                     error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Unsplash fetch failed');
                 }
@@ -4457,7 +4477,12 @@ Do NOT include a title - just the content.";
 
     /**
      * Fetch environmental image from Unsplash API
-     * Returns attachment ID or false
+     * COMPLIANT with Unsplash API Guidelines for production approval:
+     * 1. Hotlinks image (doesn't download to server)
+     * 2. Triggers download endpoint for tracking
+     * 3. Stores attribution data for display
+     *
+     * Returns array with image data or false
      */
     private function fetch_unsplash_image() {
         // Get Unsplash API key
@@ -4514,49 +4539,123 @@ Do NOT include a title - just the content.";
             return false;
         }
 
-        if (!isset($body['urls']['regular'])) {
-            error_log('EnviroLink: [UNSPLASH] ✗ Response missing image URL. Response: ' . wp_remote_retrieve_body($response));
+        if (!isset($body['urls']['regular']) || !isset($body['id'])) {
+            error_log('EnviroLink: [UNSPLASH] ✗ Response missing required data');
             return false;
         }
 
+        // Extract all required data
+        $photo_id = $body['id'];
         $image_url = $body['urls']['regular'];
-        $photographer = isset($body['user']['name']) ? $body['user']['name'] : 'Unknown';
-        $photo_link = isset($body['links']['html']) ? $body['links']['html'] : '';
+        $photographer_name = isset($body['user']['name']) ? $body['user']['name'] : 'Unknown';
+        $photographer_username = isset($body['user']['username']) ? $body['user']['username'] : '';
+        $photo_link = isset($body['links']['html']) ? $body['links']['html'] . '?utm_source=envirolink_news&utm_medium=referral' : '';
+        $download_location = isset($body['links']['download_location']) ? $body['links']['download_location'] : '';
 
-        error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer . ' (query: ' . $query . ')');
+        error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer_name . ' (ID: ' . $photo_id . ')');
 
-        // Download image
-        $tmp = download_url($image_url);
-
-        if (is_wp_error($tmp)) {
-            error_log('EnviroLink: [UNSPLASH] ✗ Failed to download image: ' . $tmp->get_error_message());
-            return false;
+        // COMPLIANCE REQUIREMENT #2: Trigger download endpoint
+        // This is REQUIRED by Unsplash API guidelines
+        if ($download_location) {
+            wp_remote_get($download_location, array(
+                'timeout' => 10,
+                'headers' => array(
+                    'Authorization' => 'Client-ID ' . $api_key
+                )
+            ));
+            error_log('EnviroLink: [UNSPLASH] ✓ Triggered download endpoint for tracking');
         }
 
-        // Prepare file array for WordPress
-        $file_array = array(
-            'name' => 'unsplash-' . md5($image_url) . '.jpg',
-            'tmp_name' => $tmp
+        // Return image data instead of downloading
+        // We'll hotlink the image (COMPLIANCE REQUIREMENT #1)
+        return array(
+            'url' => $image_url,
+            'photo_id' => $photo_id,
+            'photographer_name' => $photographer_name,
+            'photographer_username' => $photographer_username,
+            'photo_link' => $photo_link,
+            'unsplash_link' => 'https://unsplash.com/?utm_source=envirolink_news&utm_medium=referral'
+        );
+    }
+
+    /**
+     * Create WordPress attachment from external Unsplash URL (hotlink)
+     * Stores image metadata for attribution display
+     * COMPLIANCE REQUIREMENT #3: Displays photographer attribution via caption
+     */
+    private function create_unsplash_attachment($image_data) {
+        // Create attribution caption (REQUIRED by Unsplash API Guidelines)
+        // Format: "Photo by [Photographer Name] on Unsplash" with links
+        $caption = sprintf(
+            'Photo by <a href="%s" target="_blank" rel="noopener">%s</a> on <a href="%s" target="_blank" rel="noopener">Unsplash</a>',
+            esc_url($image_data['photo_link']),
+            esc_html($image_data['photographer_name']),
+            esc_url($image_data['unsplash_link'])
         );
 
-        // Upload to media library
-        $id = media_handle_sideload($file_array, 0, 'Environmental image by ' . $photographer);
+        // Create attachment post (without uploading file - hotlink only)
+        $attachment = array(
+            'post_title' => 'Photo by ' . $image_data['photographer_name'] . ' on Unsplash',
+            'post_excerpt' => $caption, // Caption field in WordPress
+            'post_content' => '',
+            'post_status' => 'inherit',
+            'post_mime_type' => 'image/jpeg',
+            'guid' => $image_data['url']
+        );
 
-        // Clean up temp file
-        @unlink($tmp);
+        $attachment_id = wp_insert_attachment($attachment);
 
-        if (is_wp_error($id)) {
-            error_log('EnviroLink: [UNSPLASH] ✗ Failed to upload to media library: ' . $id->get_error_message());
-            return false;
+        if ($attachment_id) {
+            // Store Unsplash attribution data in metadata
+            update_post_meta($attachment_id, '_unsplash_photo_id', $image_data['photo_id']);
+            update_post_meta($attachment_id, '_unsplash_photographer_name', $image_data['photographer_name']);
+            update_post_meta($attachment_id, '_unsplash_photographer_username', $image_data['photographer_username']);
+            update_post_meta($attachment_id, '_unsplash_photo_link', $image_data['photo_link']);
+            update_post_meta($attachment_id, '_unsplash_link', $image_data['unsplash_link']);
+            update_post_meta($attachment_id, '_wp_attached_file', $image_data['url']); // Store external URL
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', 'Environmental photography');
+
+            error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') - hotlinked with attribution caption');
+            return $attachment_id;
         }
 
-        // Add Unsplash credit to image metadata
-        update_post_meta($id, '_unsplash_photographer', $photographer);
-        update_post_meta($id, '_unsplash_url', $photo_link);
+        error_log('EnviroLink: [UNSPLASH] ✗ Failed to create attachment');
+        return false;
+    }
 
-        error_log('EnviroLink: [UNSPLASH] ✓ Successfully uploaded image (ID: ' . $id . ') by ' . $photographer);
+    /**
+     * Output CSS for image captions (Unsplash attribution)
+     * Makes captions small and styled properly
+     */
+    public function output_caption_css() {
+        ?>
+        <style type="text/css">
+            /* Unsplash attribution caption styling - Small and subtle */
+            .wp-caption-text,
+            .wp-element-caption,
+            figcaption {
+                font-size: 11px !important;
+                color: #666 !important;
+                line-height: 1.4 !important;
+                margin-top: 8px !important;
+                font-style: italic;
+            }
 
-        return $id;
+            .wp-caption-text a,
+            .wp-element-caption a,
+            figcaption a {
+                color: #666 !important;
+                text-decoration: none;
+            }
+
+            .wp-caption-text a:hover,
+            .wp-element-caption a:hover,
+            figcaption a:hover {
+                color: #333 !important;
+                text-decoration: underline;
+            }
+        </style>
+        <?php
     }
 }
 
