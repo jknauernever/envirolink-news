@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.25.0
+ * Version: 1.26.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.25.0');
+define('ENVIROLINK_VERSION', '1.26.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4209,22 +4209,40 @@ CONTENT: [rewritten content]";
             return;
         }
 
-        error_log('EnviroLink: Starting daily roundup generation' . ($manual_run ? ' (manual run)' : ''));
+        // Clear previous progress and start logging
+        $this->clear_progress();
+        $this->log_message('=== DAILY ROUNDUP GENERATION ===');
+        $this->log_message('Starting daily roundup generation' . ($manual_run ? ' (manual run)' : ''));
+        $this->update_progress(array(
+            'status' => 'running',
+            'message' => 'Generating daily roundup...',
+            'percent' => 0
+        ));
 
         // Step 1: Run the feed aggregator first to get latest articles
-        error_log('EnviroLink: Running feed aggregator...');
+        $this->log_message('');
+        $this->log_message('STEP 1: Running feed aggregator to get latest articles...');
+        $this->update_progress(array('percent' => 10, 'message' => 'Fetching latest articles...'));
+
         $result = $this->fetch_and_process_feeds(true); // manual_run = true to bypass schedule checks
 
         if (!$result['success']) {
-            error_log('EnviroLink: Feed aggregation failed: ' . $result['message']);
+            $this->log_message('✗ Feed aggregation failed: ' . $result['message']);
+            $this->update_progress(array(
+                'status' => 'error',
+                'message' => 'Feed aggregation failed',
+                'percent' => 100
+            ));
             return;
         }
 
-        error_log('EnviroLink: Feed aggregation completed: ' . $result['message']);
+        $this->log_message('✓ Feed aggregation completed: ' . $result['message']);
 
         // Step 2: Get the most recent articles (by when they were ADDED to WordPress, not publication date)
-        // We use ID ordering because higher IDs = more recently added to the database
-        // This gets "today's news" regardless of the articles' original publication dates
+        $this->log_message('');
+        $this->log_message('STEP 2: Collecting recent articles for roundup...');
+        $this->update_progress(array('percent' => 30, 'message' => 'Selecting articles...'));
+
         $articles = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => 30, // Get last 30 articles added to WordPress
@@ -4239,13 +4257,22 @@ CONTENT: [rewritten content]";
         ));
 
         if (empty($articles)) {
-            error_log('EnviroLink: No EnviroLink articles found - skipping roundup');
+            $this->log_message('✗ No EnviroLink articles found - cannot create roundup');
+            $this->update_progress(array(
+                'status' => 'error',
+                'message' => 'No articles available',
+                'percent' => 100
+            ));
             return;
         }
 
-        error_log('EnviroLink: Found ' . count($articles) . ' recent articles for roundup');
+        $this->log_message('✓ Found ' . count($articles) . ' recent articles for roundup');
 
         // Step 3: Prepare article summaries for AI
+        $this->log_message('');
+        $this->log_message('STEP 3: Preparing article summaries...');
+        $this->update_progress(array('percent' => 40, 'message' => 'Preparing summaries...'));
+
         $article_summaries = array();
         foreach ($articles as $article) {
             $source_name = get_post_meta($article->ID, 'envirolink_source_name', true);
@@ -4260,21 +4287,43 @@ CONTENT: [rewritten content]";
             );
         }
 
+        $this->log_message('✓ Prepared ' . count($article_summaries) . ' article summaries');
+
         // Step 4: Generate editorial content with AI
+        $this->log_message('');
+        $this->log_message('STEP 4: Generating roundup content with Claude AI...');
+        $this->update_progress(array('percent' => 50, 'message' => 'Generating content with AI...'));
+
         $api_key = get_option('envirolink_api_key');
         if (empty($api_key)) {
-            error_log('EnviroLink: Cannot generate roundup - API key not configured');
+            $this->log_message('✗ Cannot generate roundup - Anthropic API key not configured');
+            $this->update_progress(array(
+                'status' => 'error',
+                'message' => 'API key missing',
+                'percent' => 100
+            ));
             return;
         }
 
         $roundup_content = $this->generate_roundup_with_ai($article_summaries, $api_key);
 
         if (!$roundup_content) {
-            error_log('EnviroLink: AI failed to generate roundup content');
+            $this->log_message('✗ AI failed to generate roundup content');
+            $this->update_progress(array(
+                'status' => 'error',
+                'message' => 'AI generation failed',
+                'percent' => 100
+            ));
             return;
         }
 
+        $this->log_message('✓ AI generated roundup content successfully');
+
         // Step 5: Create the roundup post
+        $this->log_message('');
+        $this->log_message('STEP 5: Creating roundup post...');
+        $this->update_progress(array('percent' => 70, 'message' => 'Creating roundup post...'));
+
         $post_category = get_option('envirolink_post_category');
         $today_date = date('F j, Y'); // e.g., "November 3, 2025"
 
@@ -4313,19 +4362,25 @@ CONTENT: [rewritten content]";
         $post_id = wp_insert_post($post_data);
 
         if ($post_id) {
+            $this->log_message('✓ Created roundup post (ID: ' . $post_id . ')');
+
             // Mark this as a roundup post (not from RSS)
             update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
             // Set featured image - try multiple strategies
+            $this->log_message('');
+            $this->log_message('STEP 6: Setting featured image...');
+            $this->update_progress(array('percent' => 80, 'message' => 'Adding featured image...'));
+
             $image_id = false;
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
             // STRATEGY 1: Unsplash (if enabled) - COMPLIANT WITH API GUIDELINES
             if ($auto_fetch_unsplash) {
-                error_log('EnviroLink: [ROUNDUP IMAGE] Attempting to fetch from Unsplash...');
+                $this->log_message('[UNSPLASH] Attempting to fetch from Unsplash...');
                 $unsplash_data = $this->fetch_unsplash_image();
 
                 if ($unsplash_data) {
@@ -4340,56 +4395,73 @@ CONTENT: [rewritten content]";
                             'photo_link' => $unsplash_data['photo_link'],
                             'unsplash_link' => $unsplash_data['unsplash_link']
                         ));
-                        error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using Unsplash image (ID: ' . $image_id . ') - hotlinked & compliant');
+                        $this->log_message('[UNSPLASH] ✓ Using Unsplash image (ID: ' . $image_id . ') - hotlinked & compliant');
                     } else {
-                        error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Failed to create Unsplash attachment');
+                        $this->log_message('[UNSPLASH] ✗ Failed to create Unsplash attachment');
                     }
                 } else {
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Unsplash fetch failed');
+                    $this->log_message('[UNSPLASH] ✗ Unsplash fetch failed (check error logs for details)');
                 }
             } else {
-                error_log('EnviroLink: [ROUNDUP IMAGE] Unsplash auto-fetch is disabled (envirolink_roundup_auto_fetch_unsplash = no)');
+                $this->log_message('[UNSPLASH] Auto-fetch is disabled');
             }
 
             // STRATEGY 2: Manual collection (if Unsplash disabled or failed)
             if (!$image_id && !empty($roundup_images)) {
-                error_log('EnviroLink: [ROUNDUP IMAGE] Trying manual collection (' . count($roundup_images) . ' images available)');
+                $this->log_message('[MANUAL] Trying manual collection (' . count($roundup_images) . ' images available)');
                 $image_id = $roundup_images[array_rand($roundup_images)];
 
                 if (wp_get_attachment_url($image_id)) {
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using collection image (ID: ' . $image_id . ')');
+                    $this->log_message('[MANUAL] ✓ Using collection image (ID: ' . $image_id . ')');
                 } else {
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Selected image ID ' . $image_id . ' does not exist in media library');
+                    $this->log_message('[MANUAL] ✗ Selected image ID ' . $image_id . ' does not exist');
                     $image_id = false;
                 }
             } else if (!$image_id) {
-                error_log('EnviroLink: [ROUNDUP IMAGE] Manual collection is empty (no images uploaded)');
+                $this->log_message('[MANUAL] Collection is empty (no images uploaded)');
             }
 
             // STRATEGY 3: Use featured image from first article in roundup (fallback)
             if (!$image_id && !empty($articles)) {
-                error_log('EnviroLink: [ROUNDUP IMAGE] Trying to use image from first article in roundup...');
+                $this->log_message('[FALLBACK] Trying to use image from first article...');
                 $first_article_thumbnail = get_post_thumbnail_id($articles[0]->ID);
                 if ($first_article_thumbnail) {
                     $image_id = $first_article_thumbnail;
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using image from first article (ID: ' . $image_id . ')');
+                    $this->log_message('[FALLBACK] ✓ Using image from first article (ID: ' . $image_id . ')');
                 } else {
-                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ First article has no featured image');
+                    $this->log_message('[FALLBACK] ✗ First article has no featured image');
                 }
             }
 
             // Set the featured image if we have one
             if ($image_id) {
                 set_post_thumbnail($post_id, $image_id);
-                error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Set featured image (ID: ' . $image_id . ') for roundup');
+                $this->log_message('✓ Set featured image (ID: ' . $image_id . ') for roundup');
             } else {
-                error_log('EnviroLink: [ROUNDUP IMAGE] ✗ FAILED - No image available from any strategy');
-                error_log('EnviroLink: [ROUNDUP IMAGE] To fix: Either enable Unsplash auto-fetch OR upload images to the manual collection');
+                $this->log_message('✗ WARNING: No image available from any strategy');
+                $this->log_message('   To fix: Enable Unsplash auto-fetch OR upload images to manual collection');
             }
 
-            error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
+            $this->log_message('');
+            $this->log_message('=== ROUNDUP COMPLETE ===');
+            $this->log_message('✓ Daily roundup published successfully!');
+            $this->log_message('   Post ID: ' . $post_id);
+            $this->log_message('   Title: ' . get_the_title($post_id));
+            $this->log_message('   URL: ' . get_permalink($post_id));
+            $this->log_message('   Articles included: ' . count($articles));
+
+            $this->update_progress(array(
+                'status' => 'complete',
+                'message' => 'Roundup generated successfully!',
+                'percent' => 100
+            ));
         } else {
-            error_log('EnviroLink: Failed to create roundup post');
+            $this->log_message('✗ Failed to create roundup post');
+            $this->update_progress(array(
+                'status' => 'error',
+                'message' => 'Failed to create post',
+                'percent' => 100
+            ));
         }
     }
 
