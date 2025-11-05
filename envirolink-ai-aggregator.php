@@ -2200,16 +2200,18 @@ class EnviroLink_AI_Aggregator {
             $cats_to_add = array();
             $added_labels = array();
 
-            // All aggregated posts get "newsfeed" category
-            if (!in_array($newsfeed_id, $current_cats)) {
-                $cats_to_add[] = $newsfeed_id;
-                $added_labels[] = 'newsfeed';
-            }
-
-            // Daily roundups also get "Featured" category
-            if ($is_roundup && !in_array($featured_id, $current_cats)) {
-                $cats_to_add[] = $featured_id;
-                $added_labels[] = 'Featured';
+            if ($is_roundup) {
+                // Daily roundups get "Featured" category ONLY
+                if (!in_array($featured_id, $current_cats)) {
+                    $cats_to_add[] = $featured_id;
+                    $added_labels[] = 'Featured';
+                }
+            } else {
+                // RSS-aggregated posts get "newsfeed" category ONLY
+                if (!in_array($newsfeed_id, $current_cats)) {
+                    $cats_to_add[] = $newsfeed_id;
+                    $added_labels[] = 'newsfeed';
+                }
             }
 
             if (empty($cats_to_add)) {
@@ -3987,27 +3989,13 @@ CONTENT: [rewritten content]";
             'post_author' => 1
         );
 
-        // Set categories: configured category + "newsfeed" + "Featured"
+        // Set categories: configured category + "Featured" (NOT newsfeed - roundups are editorial, not RSS)
         $categories = array();
         if ($post_category) {
             $categories[] = $post_category;
         }
 
-        // Get or create "newsfeed" category
-        $newsfeed_cat = get_category_by_slug('newsfeed');
-        if (!$newsfeed_cat) {
-            $newsfeed_id = wp_insert_term('newsfeed', 'category', array(
-                'slug' => 'newsfeed',
-                'description' => 'News articles aggregated from RSS feeds'
-            ));
-            if (!is_wp_error($newsfeed_id)) {
-                $categories[] = $newsfeed_id['term_id'];
-            }
-        } else {
-            $categories[] = $newsfeed_cat->term_id;
-        }
-
-        // Get or create "Featured" category
+        // Get or create "Featured" category for roundups
         $featured_cat = get_category_by_slug('featured');
         if (!$featured_cat) {
             $featured_id = wp_insert_term('Featured', 'category', array(
