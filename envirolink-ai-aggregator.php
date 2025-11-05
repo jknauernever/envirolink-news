@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.21.2
+ * Version: 1.21.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.21.2');
+define('ENVIROLINK_VERSION', '1.21.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2214,14 +2214,31 @@ class EnviroLink_AI_Aggregator {
                 }
             }
 
-            if (empty($cats_to_add)) {
+            // Get WordPress default "Uncategorized" category ID (usually 1)
+            $uncategorized_id = get_option('default_category');
+
+            // Check if we need to update this post
+            $has_uncategorized = in_array($uncategorized_id, $current_cats);
+            $needs_update = !empty($cats_to_add) || $has_uncategorized;
+
+            if (!$needs_update) {
                 $this->log_message('  → Already categorized, skipping');
                 $skipped_count++;
                 continue;
             }
 
-            // Merge with existing categories (preserve them)
+            // Merge with existing categories (preserve them), but remove "Uncategorized"
             $new_cats = array_unique(array_merge($current_cats, $cats_to_add));
+
+            // Remove "Uncategorized" if present
+            $new_cats = array_diff($new_cats, array($uncategorized_id));
+
+            // Ensure we have at least one category (shouldn't happen, but safety check)
+            if (empty($new_cats)) {
+                $this->log_message('  → ⚠ Warning: No categories remain after processing, skipping');
+                $skipped_count++;
+                continue;
+            }
 
             // Update the post categories
             $result = wp_set_post_categories($post->ID, $new_cats);
@@ -2229,7 +2246,16 @@ class EnviroLink_AI_Aggregator {
             if (is_wp_error($result)) {
                 $this->log_message('  → ✗ Failed to update categories');
             } else {
-                $this->log_message('  → ✓ Added: ' . implode(', ', $added_labels));
+                $actions = array();
+                if (!empty($added_labels)) {
+                    $actions[] = 'Added: ' . implode(', ', $added_labels);
+                }
+                if ($has_uncategorized) {
+                    $actions[] = 'Removed: Uncategorized';
+                }
+
+                $this->log_message('  → ✓ ' . implode(' | ', $actions));
+
                 if (in_array($newsfeed_id, $cats_to_add)) {
                     $newsfeed_count++;
                 }
