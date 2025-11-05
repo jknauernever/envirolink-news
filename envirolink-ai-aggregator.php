@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.23.0
+ * Version: 1.24.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.23.0');
+define('ENVIROLINK_VERSION', '1.24.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -277,6 +277,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
+            update_option('envirolink_unsplash_api_key', sanitize_text_field($_POST['unsplash_api_key']));
 
             // Save roundup images collection
             if (isset($_POST['roundup_images'])) {
@@ -685,8 +686,27 @@ class EnviroLink_AI_Aggregator {
                                            <?php checked(get_option('envirolink_roundup_auto_fetch_unsplash', 'no'), 'yes'); ?> />
                                     <strong>Auto-fetch from Unsplash</strong> - Automatically get high-quality environmental images from Unsplash (free stock photos)
                                 </label>
+
+                                <div id="unsplash_api_key_wrapper" style="margin-bottom: 15px; padding: 15px; background: #f0f0f1; border-radius: 4px; <?php echo get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'no' ? 'display: none;' : ''; ?>">
+                                    <label style="display: block; margin-bottom: 8px;">
+                                        <strong>Unsplash API Access Key</strong> (required for auto-fetch):
+                                    </label>
+                                    <input type="text"
+                                           name="unsplash_api_key"
+                                           value="<?php echo esc_attr(get_option('envirolink_unsplash_api_key', '')); ?>"
+                                           class="regular-text"
+                                           placeholder="Enter your Unsplash Access Key"
+                                           style="width: 100%; max-width: 500px;" />
+                                    <p class="description" style="margin-top: 8px;">
+                                        Get a free API key at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a><br>
+                                        1. Create a free account<br>
+                                        2. Create a new application (name it "EnviroLink News")<br>
+                                        3. Copy the "Access Key" and paste it here
+                                    </p>
+                                </div>
+
                                 <p class="description" style="margin-bottom: 15px;">
-                                    <strong>Option 1:</strong> Auto-fetch from Unsplash (keywords: environment, climate, nature, earth)<br>
+                                    <strong>Option 1:</strong> Auto-fetch from Unsplash (keywords: environment, climate, nature, earth) - requires API key above<br>
                                     <strong>Option 2:</strong> Upload your own collection below and randomly select from it<br>
                                     <strong>Option 3:</strong> Enable both - uses Unsplash if your collection is empty
                                 </p>
@@ -1083,6 +1103,15 @@ class EnviroLink_AI_Aggregator {
                 $('.tab-content').hide();
                 $('#articles-tab').show();
             <?php endif; ?>
+
+            // Toggle Unsplash API key field visibility
+            $('#roundup_auto_fetch_unsplash').change(function() {
+                if ($(this).is(':checked')) {
+                    $('#unsplash_api_key_wrapper').slideDown();
+                } else {
+                    $('#unsplash_api_key_wrapper').slideUp();
+                }
+            });
 
             // Load saved log from last run on page load
             function loadSavedLog() {
@@ -4431,6 +4460,14 @@ Do NOT include a title - just the content.";
      * Returns attachment ID or false
      */
     private function fetch_unsplash_image() {
+        // Get Unsplash API key
+        $api_key = get_option('envirolink_unsplash_api_key', '');
+
+        if (empty($api_key)) {
+            error_log('EnviroLink: [UNSPLASH] ✗ API key not configured. Please add your Unsplash Access Key in Settings.');
+            return false;
+        }
+
         // Random environmental keywords for variety
         $keywords = array(
             'nature environment',
@@ -4444,6 +4481,8 @@ Do NOT include a title - just the content.";
 
         $query = $keywords[array_rand($keywords)];
 
+        error_log('EnviroLink: [UNSPLASH] Fetching image with query: ' . $query);
+
         // Fetch from Unsplash API
         $response = wp_remote_get('https://api.unsplash.com/photos/random?' . http_build_query(array(
             'query' => $query,
@@ -4452,19 +4491,31 @@ Do NOT include a title - just the content.";
         )), array(
             'timeout' => 15,
             'headers' => array(
-                'Accept-Version' => 'v1'
+                'Accept-Version' => 'v1',
+                'Authorization' => 'Client-ID ' . $api_key
             )
         ));
 
         if (is_wp_error($response)) {
-            error_log('EnviroLink: Unsplash API error: ' . $response->get_error_message());
+            error_log('EnviroLink: [UNSPLASH] ✗ API error: ' . $response->get_error_message());
             return false;
         }
 
+        $status_code = wp_remote_retrieve_response_code($response);
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
+        // Check for API errors
+        if ($status_code !== 200) {
+            $error_msg = isset($body['errors']) ? implode(', ', $body['errors']) : 'Unknown error';
+            error_log('EnviroLink: [UNSPLASH] ✗ API returned status ' . $status_code . ': ' . $error_msg);
+            if ($status_code === 401) {
+                error_log('EnviroLink: [UNSPLASH] ✗ Authorization failed. Check if your API key is correct.');
+            }
+            return false;
+        }
+
         if (!isset($body['urls']['regular'])) {
-            error_log('EnviroLink: Unsplash response missing image URL');
+            error_log('EnviroLink: [UNSPLASH] ✗ Response missing image URL. Response: ' . wp_remote_retrieve_body($response));
             return false;
         }
 
@@ -4472,13 +4523,13 @@ Do NOT include a title - just the content.";
         $photographer = isset($body['user']['name']) ? $body['user']['name'] : 'Unknown';
         $photo_link = isset($body['links']['html']) ? $body['links']['html'] : '';
 
-        error_log('EnviroLink: Fetched Unsplash image from ' . $photographer . ' (query: ' . $query . ')');
+        error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer . ' (query: ' . $query . ')');
 
         // Download image
         $tmp = download_url($image_url);
 
         if (is_wp_error($tmp)) {
-            error_log('EnviroLink: Failed to download Unsplash image: ' . $tmp->get_error_message());
+            error_log('EnviroLink: [UNSPLASH] ✗ Failed to download image: ' . $tmp->get_error_message());
             return false;
         }
 
@@ -4495,7 +4546,7 @@ Do NOT include a title - just the content.";
         @unlink($tmp);
 
         if (is_wp_error($id)) {
-            error_log('EnviroLink: Failed to upload Unsplash image: ' . $id->get_error_message());
+            error_log('EnviroLink: [UNSPLASH] ✗ Failed to upload to media library: ' . $id->get_error_message());
             return false;
         }
 
@@ -4503,7 +4554,7 @@ Do NOT include a title - just the content.";
         update_post_meta($id, '_unsplash_photographer', $photographer);
         update_post_meta($id, '_unsplash_url', $photo_link);
 
-        error_log('EnviroLink: Uploaded Unsplash image (ID: ' . $id . ')');
+        error_log('EnviroLink: [UNSPLASH] ✓ Successfully uploaded image (ID: ' . $id . ') by ' . $photographer);
 
         return $id;
     }
