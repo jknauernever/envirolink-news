@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.22.0
+ * Version: 1.23.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.22.0');
+define('ENVIROLINK_VERSION', '1.23.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3179,9 +3179,9 @@ class EnviroLink_AI_Aggregator {
                     if (empty($existing)) {
                         $this->log_message('→ No URL match found');
 
-                        // PHASE 2: Check for same image URL from same source (CRITICAL - SIMPLE CHECK!)
-                        // If same source + same image = DEFINITELY the same article
-                        $this->log_message('→ Checking for same image URL from this source...');
+                        // PHASE 2: Check for same image URL across ALL sources (CRITICAL - SIMPLE CHECK!)
+                        // If same image = likely the same article (even from different sources)
+                        $this->log_message('→ Checking for same image URL across all sources...');
                         $current_image_url = $this->extract_feed_image($item);
 
                         if ($current_image_url) {
@@ -3189,13 +3189,8 @@ class EnviroLink_AI_Aggregator {
                             $this->log_message('   Image URL: ' . $current_image_url);
 
                             foreach ($all_posts as $post) {
-                                // Only check posts from the SAME source
-                                $post_source = get_post_meta($post->ID, 'envirolink_source_name', true);
-                                if ($post_source !== $feed['name']) {
-                                    continue; // Skip posts from other sources
-                                }
-
-                                // Get the featured image URL for this post
+                                // Check ALL posts, regardless of source
+                                // (different sources often share the same AP/Reuters/Getty images)
                                 $post_thumbnail_id = get_post_thumbnail_id($post->ID);
                                 if ($post_thumbnail_id) {
                                     $post_image_url = wp_get_attachment_url($post_thumbnail_id);
@@ -3203,11 +3198,12 @@ class EnviroLink_AI_Aggregator {
                                         $normalized_post_image = $this->normalize_url($post_image_url);
 
                                         if ($normalized_image_url === $normalized_post_image) {
+                                            $post_source = get_post_meta($post->ID, 'envirolink_source_name', true);
                                             $existing = array($post);
-                                            $this->log_message('→ ✓ Found duplicate via SAME IMAGE from same source!');
-                                            $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ')');
-                                            $this->log_message('   New: "' . $original_title . '"');
-                                            $this->log_message('   Same image = SAME ARTICLE');
+                                            $this->log_message('→ ✓ Found duplicate via SAME IMAGE across sources!');
+                                            $this->log_message('   Existing: "' . $post->post_title . '" (ID: ' . $post->ID . ') from ' . $post_source);
+                                            $this->log_message('   New: "' . $original_title . '" from ' . $feed['name']);
+                                            $this->log_message('   Same image = SAME ARTICLE (different sources covering same story)');
                                             break;
                                         }
                                     }
@@ -4287,43 +4283,59 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
-            // Set featured image - try Unsplash first if enabled, then collection
+            // Set featured image - try multiple strategies
             $image_id = false;
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
+            // STRATEGY 1: Unsplash (if enabled)
             if ($auto_fetch_unsplash) {
-                // Try to fetch from Unsplash
-                error_log('EnviroLink: Attempting to fetch image from Unsplash...');
+                error_log('EnviroLink: [ROUNDUP IMAGE] Attempting to fetch from Unsplash...');
                 $image_id = $this->fetch_unsplash_image();
 
                 if ($image_id) {
-                    error_log('EnviroLink: Using Unsplash image (ID: ' . $image_id . ')');
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using Unsplash image (ID: ' . $image_id . ')');
                 } else {
-                    error_log('EnviroLink: Unsplash fetch failed, falling back to collection');
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Unsplash fetch failed');
                 }
+            } else {
+                error_log('EnviroLink: [ROUNDUP IMAGE] Unsplash auto-fetch is disabled (envirolink_roundup_auto_fetch_unsplash = no)');
             }
 
-            // Fallback to manual collection if Unsplash disabled or failed
+            // STRATEGY 2: Manual collection (if Unsplash disabled or failed)
             if (!$image_id && !empty($roundup_images)) {
-                // Randomly select one image from the collection
+                error_log('EnviroLink: [ROUNDUP IMAGE] Trying manual collection (' . count($roundup_images) . ' images available)');
                 $image_id = $roundup_images[array_rand($roundup_images)];
 
-                // Verify image exists
                 if (wp_get_attachment_url($image_id)) {
-                    error_log('EnviroLink: Using collection image (ID: ' . $image_id . ')');
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using collection image (ID: ' . $image_id . ')');
                 } else {
-                    error_log('EnviroLink: Selected collection image ID ' . $image_id . ' does not exist');
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ Selected image ID ' . $image_id . ' does not exist in media library');
                     $image_id = false;
+                }
+            } else if (!$image_id) {
+                error_log('EnviroLink: [ROUNDUP IMAGE] Manual collection is empty (no images uploaded)');
+            }
+
+            // STRATEGY 3: Use featured image from first article in roundup (fallback)
+            if (!$image_id && !empty($articles)) {
+                error_log('EnviroLink: [ROUNDUP IMAGE] Trying to use image from first article in roundup...');
+                $first_article_thumbnail = get_post_thumbnail_id($articles[0]->ID);
+                if ($first_article_thumbnail) {
+                    $image_id = $first_article_thumbnail;
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Using image from first article (ID: ' . $image_id . ')');
+                } else {
+                    error_log('EnviroLink: [ROUNDUP IMAGE] ✗ First article has no featured image');
                 }
             }
 
             // Set the featured image if we have one
             if ($image_id) {
                 set_post_thumbnail($post_id, $image_id);
-                error_log('EnviroLink: Set featured image (ID: ' . $image_id . ') for roundup');
+                error_log('EnviroLink: [ROUNDUP IMAGE] ✓ Set featured image (ID: ' . $image_id . ') for roundup');
             } else {
-                error_log('EnviroLink: No featured image set - Unsplash disabled and collection empty');
+                error_log('EnviroLink: [ROUNDUP IMAGE] ✗ FAILED - No image available from any strategy');
+                error_log('EnviroLink: [ROUNDUP IMAGE] To fix: Either enable Unsplash auto-fetch OR upload images to the manual collection');
             }
 
             error_log('EnviroLink: Daily roundup published successfully (Post ID: ' . $post_id . ')');
