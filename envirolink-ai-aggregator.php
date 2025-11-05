@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.21.4
+ * Version: 1.22.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.21.4');
+define('ENVIROLINK_VERSION', '1.22.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -74,6 +74,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_check_updates', array($this, 'ajax_check_updates'));
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
+        add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -475,6 +476,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="categorize-posts-btn" title="Add 'newsfeed' category to all aggregated posts">
                                 <span class="dashicons dashicons-tag" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Categorize Posts
+                            </button>
+                            <button type="button" class="button" id="update-authors-btn" title="Change all post authors to EnviroLink Editor">
+                                <span class="dashicons dashicons-admin-users" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Update Authors
                             </button>
                         </div>
 
@@ -1439,6 +1444,40 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
+            // Update authors button
+            $('#update-authors-btn').click(function() {
+                if (!confirm('This will change the author of all EnviroLink posts to "EnviroLink Editor".\n\nThis will create the EnviroLink Editor user if it doesn\'t exist.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_update_authors' },
+                    success: function(response) {
+                        stopProgressPolling();
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false);
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        status.html('<span style="color: red;">✗ Error occurred</span>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
+
             // Generate Roundup Now button
             $('#generate-roundup-btn').click(function() {
                 if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
@@ -1776,6 +1815,30 @@ class EnviroLink_AI_Aggregator {
 
         try {
             $result = $this->categorize_posts();
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Update all post authors to EnviroLink Editor
+     */
+    public function ajax_update_authors() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->update_all_authors();
 
             if ($result['success']) {
                 wp_send_json_success(array('message' => $result['message']));
@@ -2290,6 +2353,179 @@ class EnviroLink_AI_Aggregator {
             'success' => true,
             'message' => $message
         );
+    }
+
+    /**
+     * Update all EnviroLink post authors to "EnviroLink Editor"
+     * Creates the user if it doesn't exist
+     */
+    private function update_all_authors() {
+        $this->clear_progress();
+        $this->log_message('Starting bulk author update...');
+
+        // Get or create "EnviroLink Editor" user
+        $editor_user = get_user_by('login', 'envirolink_editor');
+
+        if (!$editor_user) {
+            $this->log_message('EnviroLink Editor user not found, creating...');
+
+            // Create the user
+            $user_id = wp_create_user(
+                'envirolink_editor',
+                wp_generate_password(24, true, true),
+                'editor@envirolink.org'
+            );
+
+            if (is_wp_error($user_id)) {
+                $this->log_message('✗ Failed to create user: ' . $user_id->get_error_message());
+                return array('success' => false, 'message' => 'Failed to create EnviroLink Editor user');
+            }
+
+            // Set display name and role
+            wp_update_user(array(
+                'ID' => $user_id,
+                'display_name' => 'EnviroLink Editor',
+                'first_name' => 'EnviroLink',
+                'last_name' => 'Editor',
+                'role' => 'editor'
+            ));
+
+            $editor_user_id = $user_id;
+            $this->log_message('✓ Created EnviroLink Editor user (ID: ' . $editor_user_id . ')');
+        } else {
+            $editor_user_id = $editor_user->ID;
+            $this->log_message('✓ Found existing EnviroLink Editor user (ID: ' . $editor_user_id . ')');
+        }
+
+        // Get all EnviroLink posts (RSS + roundups)
+        $rss_posts = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        ));
+
+        $roundup_posts_meta = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_is_roundup',
+            'meta_value' => 'yes',
+            'meta_compare' => '=',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        ));
+
+        $roundup_posts_title = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            's' => 'Daily Environmental News Roundup',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        ));
+
+        // Merge all posts and remove duplicates
+        $all_post_ids = array();
+        $posts = array();
+
+        foreach (array_merge($rss_posts, $roundup_posts_meta, $roundup_posts_title) as $post) {
+            if (!in_array($post->ID, $all_post_ids)) {
+                $all_post_ids[] = $post->ID;
+                $posts[] = $post;
+            }
+        }
+
+        $total_posts = count($posts);
+
+        if ($total_posts == 0) {
+            $this->log_message('No EnviroLink posts found');
+            return array('success' => true, 'message' => 'No posts to update');
+        }
+
+        $this->log_message('Found ' . $total_posts . ' posts to update');
+
+        $updated_count = 0;
+        $skipped_count = 0;
+
+        foreach ($posts as $index => $post) {
+            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $index + 1,
+                'total' => $total_posts,
+                'status' => 'Updating authors...'
+            ));
+
+            $this->log_message('Processing: ' . $post->post_title);
+
+            // Check if already has correct author
+            if ($post->post_author == $editor_user_id) {
+                $this->log_message('  → Already has EnviroLink Editor, skipping');
+                $skipped_count++;
+                continue;
+            }
+
+            // Update the author
+            $result = wp_update_post(array(
+                'ID' => $post->ID,
+                'post_author' => $editor_user_id
+            ));
+
+            if (is_wp_error($result)) {
+                $this->log_message('  → ✗ Failed to update author');
+            } else {
+                $this->log_message('  → ✓ Changed author to EnviroLink Editor');
+                $updated_count++;
+            }
+        }
+
+        $message = "Complete! Updated $updated_count posts";
+        if ($skipped_count > 0) {
+            $message .= ", skipped $skipped_count already correct";
+        }
+
+        $this->log_message('');
+        $this->log_message($message);
+
+        $this->clear_progress();
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
+    }
+
+    /**
+     * Get or create EnviroLink Editor user ID
+     * Returns the user ID for new posts
+     */
+    private function get_envirolink_editor_id() {
+        $editor_user = get_user_by('login', 'envirolink_editor');
+
+        if ($editor_user) {
+            return $editor_user->ID;
+        }
+
+        // Create the user if it doesn't exist
+        $user_id = wp_create_user(
+            'envirolink_editor',
+            wp_generate_password(24, true, true),
+            'editor@envirolink.org'
+        );
+
+        if (is_wp_error($user_id)) {
+            error_log('EnviroLink: Failed to create editor user: ' . $user_id->get_error_message());
+            return 1; // Fallback to admin
+        }
+
+        // Set display name and role
+        wp_update_user(array(
+            'ID' => $user_id,
+            'display_name' => 'EnviroLink Editor',
+            'first_name' => 'EnviroLink',
+            'last_name' => 'Editor',
+            'role' => 'editor'
+        ));
+
+        return $user_id;
     }
 
     /**
@@ -3161,7 +3397,7 @@ class EnviroLink_AI_Aggregator {
                         'post_content' => $rewritten['content'],
                         'post_status' => $post_status,
                         'post_type' => 'post',
-                        'post_author' => 1
+                        'post_author' => $this->get_envirolink_editor_id()
                     );
 
                     // Use original RSS publication date if available
@@ -4016,7 +4252,7 @@ CONTENT: [rewritten content]";
             'post_content' => $roundup_content,
             'post_status' => 'publish',
             'post_type' => 'post',
-            'post_author' => 1
+            'post_author' => $this->get_envirolink_editor_id()
         );
 
         // Set categories: configured category + "Featured" (NOT newsfeed - roundups are editorial, not RSS)
