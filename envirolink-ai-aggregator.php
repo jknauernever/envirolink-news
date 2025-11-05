@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.21.1
+ * Version: 1.21.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.21.1');
+define('ENVIROLINK_VERSION', '1.21.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2119,16 +2119,47 @@ class EnviroLink_AI_Aggregator {
             $this->log_message('✓ Found existing "Featured" category (ID: ' . $featured_id . ')');
         }
 
-        // Get all EnviroLink aggregated posts
-        $args = array(
+        // Get all EnviroLink posts (both RSS aggregated AND roundups)
+        // Strategy: Get RSS posts + roundup posts separately, then merge
+
+        // Get RSS-aggregated posts
+        $rss_posts = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS',
             'post_status' => array('publish', 'draft', 'pending', 'private')
-        );
+        ));
 
-        $posts = get_posts($args);
+        // Get roundup posts (with metadata)
+        $roundup_posts_meta = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_is_roundup',
+            'meta_value' => 'yes',
+            'meta_compare' => '=',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        ));
+
+        // Get roundup posts (by title pattern - for older posts without metadata)
+        $roundup_posts_title = get_posts(array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            's' => 'Daily Environmental News Roundup',
+            'post_status' => array('publish', 'draft', 'pending', 'private')
+        ));
+
+        // Merge all posts and remove duplicates
+        $all_post_ids = array();
+        $posts = array();
+
+        foreach (array_merge($rss_posts, $roundup_posts_meta, $roundup_posts_title) as $post) {
+            if (!in_array($post->ID, $all_post_ids)) {
+                $all_post_ids[] = $post->ID;
+                $posts[] = $post;
+            }
+        }
+
         $total_posts = count($posts);
 
         if ($total_posts == 0) {
@@ -2136,7 +2167,7 @@ class EnviroLink_AI_Aggregator {
             return array('success' => true, 'message' => 'No posts to categorize');
         }
 
-        $this->log_message('Found ' . $total_posts . ' posts to categorize');
+        $this->log_message('Found ' . $total_posts . ' posts to categorize (' . count($rss_posts) . ' RSS, ' . (count($roundup_posts_meta) + count($roundup_posts_title)) . ' roundups)');
 
         $newsfeed_count = 0;
         $featured_count = 0;
@@ -2153,8 +2184,14 @@ class EnviroLink_AI_Aggregator {
 
             $this->log_message('Processing: ' . $post->post_title);
 
-            // Check if this is a daily roundup
+            // Check if this is a daily roundup (by metadata OR title pattern)
             $is_roundup = get_post_meta($post->ID, 'envirolink_is_roundup', true) === 'yes';
+
+            // Fallback: Detect roundups by title pattern (for older posts without metadata)
+            if (!$is_roundup && stripos($post->post_title, 'Daily Environmental News Roundup') !== false) {
+                $is_roundup = true;
+                $this->log_message('  → Detected as roundup by title pattern');
+            }
 
             // Get current categories
             $current_cats = wp_get_post_categories($post->ID);
