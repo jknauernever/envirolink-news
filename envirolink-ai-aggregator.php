@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.30.0
+ * Version: 1.31.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.30.0');
+define('ENVIROLINK_VERSION', '1.31.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4239,35 +4239,17 @@ CONTENT: [rewritten content]";
         $this->clear_progress();
         $this->log_message('=== DAILY ROUNDUP GENERATION ===');
         $this->log_message('Starting daily roundup generation' . ($manual_run ? ' (manual run)' : ''));
+        $this->log_message('NOTE: Feed aggregator is NOT run - using existing articles from past 24 hours');
         $this->update_progress(array(
             'status' => 'running',
             'message' => 'Generating daily roundup...',
             'percent' => 0
         ));
 
-        // Step 1: Run the feed aggregator first to get latest articles
+        // Step 1: Get the most recent articles (by when they were ADDED to WordPress, not publication date)
         $this->log_message('');
-        $this->log_message('STEP 1: Running feed aggregator to get latest articles...');
-        $this->update_progress(array('percent' => 10, 'message' => 'Fetching latest articles...'));
-
-        $result = $this->fetch_and_process_feeds(true); // manual_run = true to bypass schedule checks
-
-        if (!$result['success']) {
-            $this->log_message('✗ Feed aggregation failed: ' . $result['message']);
-            $this->update_progress(array(
-                'status' => 'error',
-                'message' => 'Feed aggregation failed',
-                'percent' => 100
-            ));
-            return;
-        }
-
-        $this->log_message('✓ Feed aggregation completed: ' . $result['message']);
-
-        // Step 2: Get the most recent articles (by when they were ADDED to WordPress, not publication date)
-        $this->log_message('');
-        $this->log_message('STEP 2: Collecting recent articles for roundup...');
-        $this->update_progress(array('percent' => 30, 'message' => 'Selecting articles...'));
+        $this->log_message('STEP 1: Collecting recent articles for roundup...');
+        $this->update_progress(array('percent' => 10, 'message' => 'Selecting articles...'));
 
         $articles = get_posts(array(
             'post_type' => 'post',
@@ -4294,10 +4276,10 @@ CONTENT: [rewritten content]";
 
         $this->log_message('✓ Found ' . count($articles) . ' recent articles for roundup');
 
-        // Step 3: Prepare article summaries for AI
+        // Step 2: Prepare article summaries for AI
         $this->log_message('');
-        $this->log_message('STEP 3: Preparing article summaries...');
-        $this->update_progress(array('percent' => 40, 'message' => 'Preparing summaries...'));
+        $this->log_message('STEP 2: Preparing article summaries...');
+        $this->update_progress(array('percent' => 30, 'message' => 'Preparing summaries...'));
 
         $article_summaries = array();
         foreach ($articles as $article) {
@@ -4315,9 +4297,9 @@ CONTENT: [rewritten content]";
 
         $this->log_message('✓ Prepared ' . count($article_summaries) . ' article summaries');
 
-        // Step 4: Generate editorial content with AI
+        // Step 3: Generate editorial content with AI
         $this->log_message('');
-        $this->log_message('STEP 4: Generating roundup content with Claude AI...');
+        $this->log_message('STEP 3: Generating roundup content with Claude AI...');
         $this->update_progress(array('percent' => 50, 'message' => 'Generating content with AI...'));
 
         $api_key = get_option('envirolink_api_key');
@@ -4345,9 +4327,9 @@ CONTENT: [rewritten content]";
 
         $this->log_message('✓ AI generated roundup content successfully');
 
-        // Step 5: Create the roundup post
+        // Step 4: Create the roundup post
         $this->log_message('');
-        $this->log_message('STEP 5: Creating roundup post...');
+        $this->log_message('STEP 4: Creating roundup post...');
         $this->update_progress(array('percent' => 70, 'message' => 'Creating roundup post...'));
 
         $post_category = get_option('envirolink_post_category');
@@ -4397,8 +4379,8 @@ CONTENT: [rewritten content]";
 
             // Set featured image - try multiple strategies
             $this->log_message('');
-            $this->log_message('STEP 6: Setting featured image...');
-            $this->update_progress(array('percent' => 80, 'message' => 'Adding featured image...'));
+            $this->log_message('STEP 5: Setting featured image...');
+            $this->update_progress(array('percent' => 90, 'message' => 'Adding featured image...'));
 
             $image_id = false;
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
