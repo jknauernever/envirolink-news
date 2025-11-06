@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.31.2
+ * Version: 1.32.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.31.2');
+define('ENVIROLINK_VERSION', '1.32.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -78,6 +78,9 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
+
+        // Public AJAX endpoint for system cron (no authentication required, uses secret key)
+        add_action('wp_ajax_nopriv_envirolink_cron_roundup', array($this, 'ajax_cron_roundup'));
 
         // Post ordering - randomize within same day
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
@@ -281,6 +284,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
             update_option('envirolink_unsplash_api_key', sanitize_text_field($_POST['unsplash_api_key']));
+            update_option('envirolink_cron_secret_key', sanitize_text_field($_POST['cron_secret_key']));
 
             // Save roundup images collection
             if (isset($_POST['roundup_images'])) {
@@ -747,6 +751,29 @@ class EnviroLink_AI_Aggregator {
 
                                 <input type="hidden" name="roundup_images" id="roundup_images" value="<?php echo esc_attr(json_encode($roundup_images)); ?>">
                                 </div>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                System Cron Integration
+                            </th>
+                            <td>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <strong>Secret Key for System Cron:</strong>
+                                </label>
+                                <input type="text"
+                                       name="cron_secret_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_cron_secret_key', '')); ?>"
+                                       placeholder="Generate a random secret key"
+                                       style="width: 100%; max-width: 500px; font-family: monospace;">
+                                <p class="description">
+                                    If you're using system cron instead of WordPress cron, add this to your crontab to run the roundup at 8am MT:<br>
+                                    <code style="display: block; margin-top: 8px; padding: 8px; background: #f0f0f1; font-size: 12px; overflow-x: auto;">
+                                    0 8 * * * curl -s "<?php echo admin_url('admin-ajax.php'); ?>?action=envirolink_cron_roundup&key=YOUR_SECRET_KEY" > /dev/null 2>&1
+                                    </code>
+                                    <strong>Important:</strong> Replace <code>YOUR_SECRET_KEY</code> with the value above. This runs feeds first, then generates the roundup.
+                                </p>
                             </td>
                         </tr>
                     </table>
@@ -1986,6 +2013,74 @@ class EnviroLink_AI_Aggregator {
                 wp_send_json_error(array('message' => 'Roundup generation completed but no post was created. Check error logs for details.'));
             }
         } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error generating roundup: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Generate roundup via system cron (public endpoint with secret key)
+     * This allows system cron to trigger roundup generation without WordPress CRON
+     */
+    public function ajax_cron_roundup() {
+        // Verify secret key
+        $provided_key = isset($_GET['key']) ? sanitize_text_field($_GET['key']) : '';
+        $secret_key = get_option('envirolink_cron_secret_key', '');
+
+        if (empty($secret_key)) {
+            error_log('EnviroLink: Cron roundup failed - secret key not configured');
+            wp_send_json_error(array('message' => 'Secret key not configured'));
+            return;
+        }
+
+        if ($provided_key !== $secret_key) {
+            error_log('EnviroLink: Cron roundup failed - invalid secret key');
+            wp_send_json_error(array('message' => 'Invalid secret key'));
+            return;
+        }
+
+        // Check if enabled
+        if (get_option('envirolink_daily_roundup_enabled', 'no') !== 'yes') {
+            error_log('EnviroLink: Cron roundup skipped - feature disabled');
+            wp_send_json_error(array('message' => 'Daily roundup is disabled'));
+            return;
+        }
+
+        // Generate the roundup (manual_run = false so it runs feeds first)
+        try {
+            $this->generate_daily_roundup(false);
+
+            // Check if it succeeded
+            $recent_roundup = get_posts(array(
+                'post_type' => 'post',
+                'posts_per_page' => 1,
+                'meta_query' => array(
+                    array(
+                        'key' => 'envirolink_is_roundup',
+                        'value' => 'yes',
+                        'compare' => '='
+                    )
+                ),
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            if (!empty($recent_roundup)) {
+                $roundup_post = $recent_roundup[0];
+                $article_count = get_post_meta($roundup_post->ID, 'envirolink_roundup_article_count', true);
+                $post_url = get_permalink($roundup_post->ID);
+
+                error_log('EnviroLink: Cron roundup succeeded (Post ID: ' . $roundup_post->ID . ')');
+                wp_send_json_success(array(
+                    'message' => 'Daily roundup generated successfully! Included ' . $article_count . ' articles.',
+                    'post_url' => $post_url,
+                    'post_id' => $roundup_post->ID
+                ));
+            } else {
+                error_log('EnviroLink: Cron roundup completed but no post created');
+                wp_send_json_error(array('message' => 'Roundup generation completed but no post was created'));
+            }
+        } catch (Exception $e) {
+            error_log('EnviroLink: Cron roundup exception: ' . $e->getMessage());
             wp_send_json_error(array('message' => 'Error generating roundup: ' . $e->getMessage()));
         }
     }
