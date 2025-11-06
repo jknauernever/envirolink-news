@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.26.0
+ * Version: 1.27.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.26.0');
+define('ENVIROLINK_VERSION', '1.27.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4678,6 +4678,9 @@ Do NOT include a title - just the content.";
         $attachment_id = wp_insert_attachment($attachment);
 
         if ($attachment_id) {
+            // CRITICAL: Store URL in FIFU's custom field for external image display
+            update_post_meta($attachment_id, 'fifu_image_url', $image_data['url']);
+
             // Store Unsplash attribution data in metadata
             update_post_meta($attachment_id, '_unsplash_photo_id', $image_data['photo_id']);
             update_post_meta($attachment_id, '_unsplash_photographer_name', $image_data['photographer_name']);
@@ -4687,7 +4690,7 @@ Do NOT include a title - just the content.";
             update_post_meta($attachment_id, '_wp_attached_file', $image_data['url']); // Store external URL
             update_post_meta($attachment_id, '_wp_attachment_image_alt', 'Environmental photography');
 
-            error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') - hotlinked with attribution caption');
+            error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') - hotlinked with FIFU support');
             return $attachment_id;
         }
 
