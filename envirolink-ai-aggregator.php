@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.31.1
+ * Version: 1.31.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.31.1');
+define('ENVIROLINK_VERSION', '1.31.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2402,7 +2402,14 @@ class EnviroLink_AI_Aggregator {
         $this->log_message('Starting bulk author update...');
 
         // Get or create "EnviroLink Editor" user
+        // Try multiple variations to find existing user
         $editor_user = get_user_by('login', 'envirolink_editor');
+        if (!$editor_user) {
+            $editor_user = get_user_by('login', 'EnviroLink Editor');
+        }
+        if (!$editor_user) {
+            $editor_user = get_user_by('email', 'jknauer+editor@gmail.com');
+        }
 
         if (!$editor_user) {
             $this->log_message('EnviroLink Editor user not found, creating...');
@@ -2536,7 +2543,14 @@ class EnviroLink_AI_Aggregator {
      * Returns the user ID for new posts
      */
     private function get_envirolink_editor_id() {
+        // Try multiple variations to find existing user
         $editor_user = get_user_by('login', 'envirolink_editor');
+        if (!$editor_user) {
+            $editor_user = get_user_by('login', 'EnviroLink Editor');
+        }
+        if (!$editor_user) {
+            $editor_user = get_user_by('email', 'jknauer+editor@gmail.com');
+        }
 
         if ($editor_user) {
             return $editor_user->ID;
