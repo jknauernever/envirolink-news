@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.31.0
+ * Version: 1.31.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.31.0');
+define('ENVIROLINK_VERSION', '1.31.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4081,6 +4081,15 @@ class EnviroLink_AI_Aggregator {
         // Fallback if parsing fails
         if (empty($clean_filename)) {
             $clean_filename = 'image-' . time() . '.jpg';
+        }
+
+        // CRITICAL: Ensure filename has an extension
+        // WordPress requires proper file extensions to determine MIME type
+        $file_extension = pathinfo($clean_filename, PATHINFO_EXTENSION);
+        if (empty($file_extension)) {
+            // No extension found - add .jpg (most common for web images)
+            $clean_filename .= '.jpg';
+            $this->log_message('    → Added .jpg extension to filename');
         }
 
         $this->log_message('    → Using filename: ' . $clean_filename);
