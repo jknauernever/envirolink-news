@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.29.0
+ * Version: 1.30.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.29.0');
+define('ENVIROLINK_VERSION', '1.30.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4410,29 +4410,36 @@ CONTENT: [rewritten content]";
                 $unsplash_data = $this->fetch_unsplash_image();
 
                 if ($unsplash_data) {
-                    // Use FIFU plugin to set external image URL on the POST
-                    // FIFU reads from 'fifu_image_url' meta field on the post itself
-                    update_post_meta($post_id, 'fifu_image_url', $unsplash_data['url']);
-
-                    // Create WordPress attachment for caption/attribution display
-                    $image_id = $this->create_unsplash_attachment($unsplash_data);
+                    // Download and upload the image to WordPress media library (SAME AS FEED IMAGES)
+                    $this->log_message('[UNSPLASH] Downloading image: ' . $unsplash_data['url']);
+                    $image_id = $this->set_featured_image_from_url($unsplash_data['url'], $post_id);
 
                     if ($image_id) {
-                        // Set as featured image (for theme compatibility)
-                        set_post_thumbnail($post_id, $image_id);
+                        // Update attachment metadata with Unsplash attribution
+                        $caption = sprintf(
+                            'Photo by <a href="%s" target="_blank" rel="noopener">%s</a> on <a href="%s" target="_blank" rel="noopener">Unsplash</a>',
+                            esc_url($unsplash_data['photo_link']),
+                            esc_html($unsplash_data['photographer_name']),
+                            esc_url($unsplash_data['unsplash_link'])
+                        );
+
+                        wp_update_post(array(
+                            'ID' => $image_id,
+                            'post_excerpt' => $caption
+                        ));
+
+                        // Store attribution data on the POST
+                        update_post_meta($post_id, '_unsplash_attribution', array(
+                            'photographer_name' => $unsplash_data['photographer_name'],
+                            'photographer_username' => $unsplash_data['photographer_username'],
+                            'photo_link' => $unsplash_data['photo_link'],
+                            'unsplash_link' => $unsplash_data['unsplash_link']
+                        ));
+
+                        $this->log_message('[UNSPLASH] ✓ Downloaded and set as featured image (ID: ' . $image_id . ')');
+                    } else {
+                        $this->log_message('[UNSPLASH] ✗ Failed to download/upload Unsplash image');
                     }
-
-                    // Store attribution data on the POST (for display)
-                    update_post_meta($post_id, '_unsplash_attribution', array(
-                        'photographer_name' => $unsplash_data['photographer_name'],
-                        'photographer_username' => $unsplash_data['photographer_username'],
-                        'photo_link' => $unsplash_data['photo_link'],
-                        'unsplash_link' => $unsplash_data['unsplash_link']
-                    ));
-
-                    $this->log_message('[UNSPLASH] ✓ Set FIFU image URL: ' . $unsplash_data['url']);
-                    $this->log_message('[UNSPLASH] ✓ Using Unsplash image - hotlinked & compliant');
-                    $image_id = true; // Mark as successfully set
                 } else {
                     $this->log_message('[UNSPLASH] ✗ Unsplash fetch failed (check error logs for details)');
                 }
@@ -4468,6 +4475,7 @@ CONTENT: [rewritten content]";
             }
 
             // Set the featured image if we have one (from manual or fallback strategies)
+            // Note: Unsplash strategy already sets featured image via set_featured_image_from_url()
             if ($image_id && !$auto_fetch_unsplash) {
                 set_post_thumbnail($post_id, $image_id);
                 $this->log_message('✓ Set featured image (ID: ' . $image_id . ') for roundup');
