@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.28.1
+ * Version: 1.29.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.28.1');
+define('ENVIROLINK_VERSION', '1.29.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4212,6 +4212,29 @@ CONTENT: [rewritten content]";
             return;
         }
 
+        // Check if roundup already exists for today (only for automatic runs)
+        if (!$manual_run) {
+            $today_title = 'Daily Environmental News Roundup by the EnviroLink Team – ' . date('F j, Y');
+            $existing_roundup = get_posts(array(
+                'post_type' => 'post',
+                'post_status' => 'publish',
+                'posts_per_page' => 1,
+                'title' => $today_title,
+                'meta_query' => array(
+                    array(
+                        'key' => 'envirolink_is_roundup',
+                        'value' => 'yes',
+                        'compare' => '='
+                    )
+                )
+            ));
+
+            if (!empty($existing_roundup)) {
+                error_log('EnviroLink: Daily roundup already exists for today - skipping duplicate creation');
+                return;
+            }
+        }
+
         // Clear previous progress and start logging
         $this->clear_progress();
         $this->log_message('=== DAILY ROUNDUP GENERATION ===');
@@ -4387,21 +4410,29 @@ CONTENT: [rewritten content]";
                 $unsplash_data = $this->fetch_unsplash_image();
 
                 if ($unsplash_data) {
-                    // Create WordPress attachment from external URL (hotlink - no download)
+                    // Use FIFU plugin to set external image URL on the POST
+                    // FIFU reads from 'fifu_image_url' meta field on the post itself
+                    update_post_meta($post_id, 'fifu_image_url', $unsplash_data['url']);
+
+                    // Create WordPress attachment for caption/attribution display
                     $image_id = $this->create_unsplash_attachment($unsplash_data);
 
                     if ($image_id) {
-                        // Store attribution data on the POST (for display)
-                        update_post_meta($post_id, '_unsplash_attribution', array(
-                            'photographer_name' => $unsplash_data['photographer_name'],
-                            'photographer_username' => $unsplash_data['photographer_username'],
-                            'photo_link' => $unsplash_data['photo_link'],
-                            'unsplash_link' => $unsplash_data['unsplash_link']
-                        ));
-                        $this->log_message('[UNSPLASH] ✓ Using Unsplash image (ID: ' . $image_id . ') - hotlinked & compliant');
-                    } else {
-                        $this->log_message('[UNSPLASH] ✗ Failed to create Unsplash attachment');
+                        // Set as featured image (for theme compatibility)
+                        set_post_thumbnail($post_id, $image_id);
                     }
+
+                    // Store attribution data on the POST (for display)
+                    update_post_meta($post_id, '_unsplash_attribution', array(
+                        'photographer_name' => $unsplash_data['photographer_name'],
+                        'photographer_username' => $unsplash_data['photographer_username'],
+                        'photo_link' => $unsplash_data['photo_link'],
+                        'unsplash_link' => $unsplash_data['unsplash_link']
+                    ));
+
+                    $this->log_message('[UNSPLASH] ✓ Set FIFU image URL: ' . $unsplash_data['url']);
+                    $this->log_message('[UNSPLASH] ✓ Using Unsplash image - hotlinked & compliant');
+                    $image_id = true; // Mark as successfully set
                 } else {
                     $this->log_message('[UNSPLASH] ✗ Unsplash fetch failed (check error logs for details)');
                 }
@@ -4436,11 +4467,11 @@ CONTENT: [rewritten content]";
                 }
             }
 
-            // Set the featured image if we have one
-            if ($image_id) {
+            // Set the featured image if we have one (from manual or fallback strategies)
+            if ($image_id && !$auto_fetch_unsplash) {
                 set_post_thumbnail($post_id, $image_id);
                 $this->log_message('✓ Set featured image (ID: ' . $image_id . ') for roundup');
-            } else {
+            } else if (!$image_id) {
                 $this->log_message('✗ WARNING: No image available from any strategy');
                 $this->log_message('   To fix: Enable Unsplash auto-fetch OR upload images to manual collection');
             }
