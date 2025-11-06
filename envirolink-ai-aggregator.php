@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.28.0
+ * Version: 1.28.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.28.0');
+define('ENVIROLINK_VERSION', '1.28.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1523,7 +1523,8 @@ class EnviroLink_AI_Aggregator {
                 var status = $('#run-now-status');
 
                 btn.prop('disabled', true).text('Generating...');
-                status.html('<span style="color: #666;">⏳ Running aggregator and generating editorial content...</span>');
+                status.html('');
+                startProgressPolling();
 
                 $.ajax({
                     url: ajaxurl,
@@ -1531,6 +1532,7 @@ class EnviroLink_AI_Aggregator {
                     data: { action: 'envirolink_generate_roundup' },
                     timeout: 180000, // 3 minutes timeout
                     success: function(response) {
+                        stopProgressPolling();
                         if (response.success) {
                             status.html(
                                 '<span style="color: green;">✓ ' + response.data.message + '</span><br>' +
@@ -1542,6 +1544,7 @@ class EnviroLink_AI_Aggregator {
                         btn.prop('disabled', false).text('Generate Roundup Now');
                     },
                     error: function() {
+                        stopProgressPolling();
                         status.html('<span style="color: red;">✗ Error generating roundup. Check error logs for details.</span>');
                         btn.prop('disabled', false).text('Generate Roundup Now');
                     }
