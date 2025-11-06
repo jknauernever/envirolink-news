@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.27.0
+ * Version: 1.28.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.27.0');
+define('ENVIROLINK_VERSION', '1.28.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4623,6 +4623,8 @@ Do NOT include a title - just the content.";
         $photographer_username = isset($body['user']['username']) ? $body['user']['username'] : '';
         $photo_link = isset($body['links']['html']) ? $body['links']['html'] . '?utm_source=envirolink_news&utm_medium=referral' : '';
         $download_location = isset($body['links']['download_location']) ? $body['links']['download_location'] : '';
+        $width = isset($body['width']) ? intval($body['width']) : 1920;
+        $height = isset($body['height']) ? intval($body['height']) : 1280;
 
         error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer_name . ' (ID: ' . $photo_id . ')');
 
@@ -4646,7 +4648,9 @@ Do NOT include a title - just the content.";
             'photographer_name' => $photographer_name,
             'photographer_username' => $photographer_username,
             'photo_link' => $photo_link,
-            'unsplash_link' => 'https://unsplash.com/?utm_source=envirolink_news&utm_medium=referral'
+            'unsplash_link' => 'https://unsplash.com/?utm_source=envirolink_news&utm_medium=referral',
+            'width' => $width,
+            'height' => $height
         );
     }
 
@@ -4681,6 +4685,41 @@ Do NOT include a title - just the content.";
             // CRITICAL: Store URL in FIFU's custom field for external image display
             update_post_meta($attachment_id, 'fifu_image_url', $image_data['url']);
 
+            // CRITICAL: Set attachment metadata with image dimensions
+            // WordPress needs this to properly display images via the_post_thumbnail()
+            $attachment_metadata = array(
+                'width' => $image_data['width'],
+                'height' => $image_data['height'],
+                'file' => $image_data['url'],
+                'sizes' => array(
+                    'thumbnail' => array(
+                        'file' => $image_data['url'],
+                        'width' => min(150, $image_data['width']),
+                        'height' => min(150, $image_data['height']),
+                        'mime-type' => 'image/jpeg'
+                    ),
+                    'medium' => array(
+                        'file' => $image_data['url'],
+                        'width' => min(300, $image_data['width']),
+                        'height' => min(300, $image_data['height']),
+                        'mime-type' => 'image/jpeg'
+                    ),
+                    'large' => array(
+                        'file' => $image_data['url'],
+                        'width' => min(1024, $image_data['width']),
+                        'height' => min(1024, $image_data['height']),
+                        'mime-type' => 'image/jpeg'
+                    ),
+                    'full' => array(
+                        'file' => $image_data['url'],
+                        'width' => $image_data['width'],
+                        'height' => $image_data['height'],
+                        'mime-type' => 'image/jpeg'
+                    )
+                )
+            );
+            update_post_meta($attachment_id, '_wp_attachment_metadata', $attachment_metadata);
+
             // Store Unsplash attribution data in metadata
             update_post_meta($attachment_id, '_unsplash_photo_id', $image_data['photo_id']);
             update_post_meta($attachment_id, '_unsplash_photographer_name', $image_data['photographer_name']);
@@ -4690,7 +4729,7 @@ Do NOT include a title - just the content.";
             update_post_meta($attachment_id, '_wp_attached_file', $image_data['url']); // Store external URL
             update_post_meta($attachment_id, '_wp_attachment_image_alt', 'Environmental photography');
 
-            error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') - hotlinked with FIFU support');
+            error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') with dimensions ' . $image_data['width'] . 'x' . $image_data['height']);
             return $attachment_id;
         }
 
