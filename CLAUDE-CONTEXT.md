@@ -26,8 +26,11 @@
 envirolink-news/
 ├── envirolink-ai-aggregator.php     # Main plugin file (monolithic)
 ├── create-plugin.sh                 # Build script for plugin ZIP
-├── blocksy-child-functions.php      # Legacy theme functions (standalone)
-├── blocksy-child-styles.css         # Legacy theme styles (standalone)
+│
+├── blocksy-child-functions.php      # ACTIVE theme functions
+├── blocksy-child-styles.css         # ACTIVE theme styles
+├── front-page.php                   # ACTIVE homepage template
+│
 ├── CLAUDE.md                        # Developer documentation (read this!)
 ├── CLAUDE-CONTEXT.md                # This file - session context
 ├── README.md                        # User documentation
@@ -40,8 +43,10 @@ envirolink-news/
 - **CLAUDE.md** - Detailed technical documentation (READ THIS FIRST for deep dives)
 - **This file** - Quick context for resuming work
 - **envirolink-ai-aggregator.php** - All plugin logic (single 4600+ line file)
+- **blocksy-child-functions.php** - Theme customizations (metadata display, hooks)
+- **front-page.php** - Custom homepage layout (daily roundup + news grid)
 
-**Note:** Theme files (blocksy-child-*) are legacy standalone files. Theme is deployed separately, not tracked in this repo.
+**Theme:** Using Blocksy child theme with standalone files (blocksy-child-*) deployed directly to server at `/wp-content/themes/blocksy-child/`
 
 ---
 
@@ -177,8 +182,17 @@ No automated tests. Manual testing:
 zip -r ../envirolink-ai-aggregator.zip . -x "*.git*" "*.sh" "*.zip"
 ```
 
-### **Theme Management**
-Theme files are deployed and managed separately from this repository. This repo focuses solely on the plugin.
+### **Theme Deployment**
+
+**Active Theme:** Blocksy child theme (blocksy-child)
+
+**Theme Files:**
+- `blocksy-child-functions.php` - WordPress hooks, metadata display
+- `blocksy-child-styles.css` - Theme styling
+- `front-page.php` - Custom homepage template
+
+**Deployment:**
+Theme files are deployed manually to `/wp-content/themes/blocksy-child/` on the server. Updates are not automated like the plugin - changes must be uploaded manually via SFTP or WordPress admin.
 
 ---
 
