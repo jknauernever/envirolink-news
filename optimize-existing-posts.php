@@ -205,14 +205,20 @@ $dry_run = ($action !== 'apply');
         // Start optimization
         $start_time = microtime(true);
 
-        // Get all posts with envirolink metadata
+        // Get all EnviroLink posts (both regular articles AND roundups)
         $args = array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_query' => array(
+                'relation' => 'OR',
                 array(
                     'key' => 'envirolink_source_url',
                     'compare' => 'EXISTS'
+                ),
+                array(
+                    'key' => 'envirolink_is_roundup',
+                    'value' => 'yes',
+                    'compare' => '='
                 )
             ),
             'orderby' => 'ID',
