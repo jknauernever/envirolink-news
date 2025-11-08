@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.32.0
+ * Version: 1.33.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.32.0');
+define('ENVIROLINK_VERSION', '1.33.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -768,6 +768,7 @@ class EnviroLink_AI_Aggregator {
                                        placeholder="Generate a random secret key"
                                        style="width: 100%; max-width: 500px; font-family: monospace;">
                                 <p class="description">
+                                    <strong style="color: #d63638;">⚠️ WARNING:</strong> Only use system cron if you have disabled WordPress cron (<code>DISABLE_WP_CRON</code>). <strong>Do NOT run both</strong> WordPress cron and system cron simultaneously, as this will create duplicate roundup posts.<br><br>
                                     If you're using system cron instead of WordPress cron, add this to your crontab to run the roundup at 8am MT:<br>
                                     <code style="display: block; margin-top: 8px; padding: 8px; background: #f0f0f1; font-size: 12px; overflow-x: auto;">
                                     0 8 * * * curl -s "<?php echo admin_url('admin-ajax.php'); ?>?action=envirolink_cron_roundup&key=YOUR_SECRET_KEY" > /dev/null 2>&1
@@ -4332,7 +4333,7 @@ CONTENT: [rewritten content]";
 
         // Check if roundup already exists for today (only for automatic runs)
         if (!$manual_run) {
-            $today_title = 'Daily Environmental News Roundup by the EnviroLink Team – ' . date('F j, Y');
+            $today_title = 'Daily Environmental News Roundup by the EnviroLink Team - ' . date('F j, Y');
             $existing_roundup = get_posts(array(
                 'post_type' => 'post',
                 'post_status' => 'publish',
@@ -4351,6 +4352,17 @@ CONTENT: [rewritten content]";
                 error_log('EnviroLink: Daily roundup already exists for today - skipping duplicate creation');
                 return;
             }
+        }
+
+        // Check for active generation lock to prevent race conditions (only for automatic runs)
+        if (!$manual_run) {
+            $lock_key = 'envirolink_roundup_generation_lock';
+            if (get_transient($lock_key)) {
+                error_log('EnviroLink: Daily roundup generation already in progress - skipping to prevent duplicates');
+                return;
+            }
+            // Set lock for 5 minutes (300 seconds) - will auto-expire if process crashes
+            set_transient($lock_key, time(), 300);
         }
 
         // Clear previous progress and start logging
@@ -4389,6 +4401,10 @@ CONTENT: [rewritten content]";
                 'message' => 'No articles available',
                 'percent' => 100
             ));
+            // Clear generation lock on error
+            if (!$manual_run) {
+                delete_transient('envirolink_roundup_generation_lock');
+            }
             return;
         }
 
@@ -4428,6 +4444,10 @@ CONTENT: [rewritten content]";
                 'message' => 'API key missing',
                 'percent' => 100
             ));
+            // Clear generation lock on error
+            if (!$manual_run) {
+                delete_transient('envirolink_roundup_generation_lock');
+            }
             return;
         }
 
@@ -4440,6 +4460,10 @@ CONTENT: [rewritten content]";
                 'message' => 'AI generation failed',
                 'percent' => 100
             ));
+            // Clear generation lock on error
+            if (!$manual_run) {
+                delete_transient('envirolink_roundup_generation_lock');
+            }
             return;
         }
 
@@ -4488,10 +4512,12 @@ CONTENT: [rewritten content]";
         $post_id = wp_insert_post($post_data);
 
         if ($post_id) {
+            // Mark as roundup post IMMEDIATELY to prevent race condition duplicates
+            update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
+
             $this->log_message('✓ Created roundup post (ID: ' . $post_id . ')');
 
-            // Mark this as a roundup post (not from RSS)
-            update_post_meta($post_id, 'envirolink_is_roundup', 'yes');
+            // Add additional metadata
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
@@ -4597,6 +4623,11 @@ CONTENT: [rewritten content]";
                 'message' => 'Roundup generated successfully!',
                 'percent' => 100
             ));
+
+            // Clear generation lock on success
+            if (!$manual_run) {
+                delete_transient('envirolink_roundup_generation_lock');
+            }
         } else {
             $this->log_message('✗ Failed to create roundup post');
             $this->update_progress(array(
@@ -4604,6 +4635,11 @@ CONTENT: [rewritten content]";
                 'message' => 'Failed to create post',
                 'percent' => 100
             ));
+
+            // Clear generation lock on error
+            if (!$manual_run) {
+                delete_transient('envirolink_roundup_generation_lock');
+            }
         }
     }
 
