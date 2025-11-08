@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.33.0
+ * Version: 1.34.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.33.0');
+define('ENVIROLINK_VERSION', '1.34.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2747,6 +2747,31 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * Optimize title for SEO
+     * - Removes excessive punctuation
+     * - Ensures proper capitalization
+     * - Limits to 60 characters for search snippets
+     */
+    private function optimize_title_for_seo($title) {
+        // Remove excessive punctuation
+        $title = preg_replace('/[!]{2,}/', '!', $title);
+        $title = preg_replace('/[?]{2,}/', '?', $title);
+        
+        // Capitalize first letter of each sentence
+        $title = ucfirst(strtolower($title));
+        $title = preg_replace_callback('/([.!?]\s+)([a-z])/', function($matches) {
+            return $matches[1] . strtoupper($matches[2]);
+        }, $title);
+        
+        // Truncate if too long (Google displays ~60 chars)
+        if (strlen($title) > 70) {
+            $title = substr($title, 0, 67) . '...';
+        }
+        
+        return $title;
+    }
+
+    /**
      * Normalize URL for duplicate detection
      * Handles http/https, www, trailing slashes, and query parameter variations
      */
@@ -3490,9 +3515,12 @@ class EnviroLink_AI_Aggregator {
                         continue;
                     } else {
                         // Full content update
+                        // Optimize title for SEO
+                        $optimized_title = $this->optimize_title_for_seo($rewritten['title']);
+                        
                         $post_data = array(
                             'ID' => $existing_post_id,
-                            'post_title' => $rewritten['title'],
+                            'post_title' => $optimized_title,
                             'post_content' => $rewritten['content']
                         );
 
@@ -3536,8 +3564,11 @@ class EnviroLink_AI_Aggregator {
                     }
                 } else {
                     // Create new post using original publication date
+                    // Optimize title for SEO (remove excessive punctuation, proper capitalization)
+                    $optimized_title = $this->optimize_title_for_seo($rewritten['title']);
+                    
                     $post_data = array(
-                        'post_title' => $rewritten['title'],
+                        'post_title' => $optimized_title,
                         'post_content' => $rewritten['content'],
                         'post_status' => $post_status,
                         'post_type' => 'post',
@@ -3636,6 +3667,12 @@ class EnviroLink_AI_Aggregator {
                         // Set featured image if found
                         if ($image_url) {
                             $this->set_featured_image_from_url($image_url, $post_id);
+                        }
+
+                        // Set AIOSEO schema markup for better search appearance
+                        if (function_exists('aioseo')) {
+                            update_post_meta($post_id, '_aioseo_schema_type', 'Article');
+                            update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
                         }
 
                         $total_created++;
@@ -4476,13 +4513,18 @@ CONTENT: [rewritten content]";
 
         $post_category = get_option('envirolink_post_category');
         $today_date = date('F j, Y'); // e.g., "November 3, 2025"
+        $month_day = date('M j'); // e.g., "Nov 8"
+
+        // SEO-optimized meta description
+        $meta_description = 'Today\'s top environmental stories: climate action, wildlife conservation, renewable energy, and sustainability news from around the world. Updated ' . date('M j, Y') . '.';
 
         $post_data = array(
-            'post_title' => 'Daily Environmental News Roundup by the EnviroLink Team - ' . $today_date,
+            'post_title' => 'Environmental News Today: Climate, Wildlife & Conservation Updates [' . $month_day . ']',
             'post_content' => $roundup_content,
             'post_status' => 'publish',
             'post_type' => 'post',
-            'post_author' => $this->get_envirolink_editor_id()
+            'post_author' => $this->get_envirolink_editor_id(),
+            'post_excerpt' => $meta_description
         );
 
         // Set categories: configured category + "Featured" (NOT newsfeed - roundups are editorial, not RSS)
@@ -4520,6 +4562,15 @@ CONTENT: [rewritten content]";
             // Add additional metadata
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
+
+            // Set AIOSEO meta for better SEO
+            if (function_exists('aioseo')) {
+                update_post_meta($post_id, '_aioseo_description', $meta_description);
+                update_post_meta($post_id, '_aioseo_og_article_section', 'Environment');
+                update_post_meta($post_id, '_aioseo_og_article_tags', 'environmental news,climate change,conservation,sustainability');
+                update_post_meta($post_id, '_aioseo_schema_type', 'Article');
+                update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
+            }
 
             // Set featured image - try multiple strategies
             $this->log_message('');
