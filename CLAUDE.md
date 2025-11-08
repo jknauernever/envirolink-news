@@ -229,6 +229,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.35.0** (2025-11-08) - Add automatic alt text to all images for SEO/accessibility
+- Added automatic alt text generation for all featured images
+- RSS feed images get alt text based on post title (improves SEO and accessibility)
+- Unsplash images get descriptive environmental alt text
+- Fixes AIOSEO warning: "Some images on the page have no alt attribute"
+- All future images automatically have proper alt text for search engines
+- Code changes: Lines 4282-4286 (RSS images), Line 4965 (Unsplash images)
+
 **v1.12.2** (2025-11-01) - Fix "Check for Updates" button error
 - Fixed "Update checker not initialized" error when clicking Check for Updates button
 - Changed update checker from local variable to global variable (`$envirolink_update_checker`)

@@ -1,6 +1,6 @@
 # CLAUDE CONTEXT - Quick Start Guide for Future Sessions
 
-**Last Updated:** 2025-11-08 (v1.34.0)
+**Last Updated:** 2025-11-08 (v1.35.0)
 **Purpose:** This file helps future Claude Code instances quickly understand the project status, deployment workflows, and recent changes.
 
 ---
@@ -277,6 +277,7 @@ Theme files are deployed manually to `/wp-content/themes/blocksy-child/` on the 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| v1.35.0 | 2025-11-08 | Add automatic alt text to all images for SEO/accessibility |
 | v1.34.0 | 2025-11-08 | SEO optimization: optimized titles, meta descriptions, schema markup for all content |
 | v1.33.0 | 2025-11-08 | **CRITICAL:** Fix duplicate roundup posts (4 protection layers) |
 | v1.32.0 | 2025-11-06 | Add system cron support for hosts with WP-CRON disabled |

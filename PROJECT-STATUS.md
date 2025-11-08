@@ -86,16 +86,22 @@
 - [x] Added Schema markup (NewsArticle) to all articles and roundups
 - [x] Created title optimization function (removes excess punctuation, proper caps)
 - [x] Applied title optimization to ALL new and updated articles
+- [x] **v1.35.0:** Added automatic alt text to all images for SEO/accessibility
 
 **Remaining Tasks:**
 - [ ] Submit XML sitemap to Google Search Console (5 mins)
 - [ ] Optimize homepage meta title and description manually
 - [ ] Add internal linking between related articles
 - [ ] Create pillar pages for main topics
+- [ ] Optional: Add CSS minification (low priority - recommend skipping for now)
+- [ ] Optional: Reduce page requests to <20 (low priority - recommend skipping for now)
 
 **Results:**
-- Version 1.34.0 deployed with all SEO improvements
+- Version 1.34.0: Core SEO improvements deployed
+- Version 1.35.0: Automatic alt text for all images
 - Every new article and roundup now has proper SEO optimization
+- All images automatically get descriptive alt text
+- Fixes AIOSEO "missing alt attribute" warning
 - Search engines can better understand and rank content
 - Expected: +30% CTR improvement, +50-100 organic visitors/month
 
