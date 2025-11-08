@@ -23,9 +23,13 @@ if ($provided_key !== $required_key) {
 // Load WordPress
 require_once('wp-load.php');
 
-// Check if user is admin (additional security)
+// Optional: Check if user is admin (you can skip this since we have the secret key)
+// Note: If you're not logged in, the script will still work with the secret key
 if (!current_user_can('manage_options')) {
-    die('Error: You must be logged into WordPress as an administrator to run this script.');
+    // Show a warning but allow execution with secret key
+    $not_logged_in = true;
+} else {
+    $not_logged_in = false;
 }
 
 // Get action
@@ -178,6 +182,12 @@ $dry_run = ($action !== 'apply');
 <body>
     <div class="container">
         <h1>🌍 EnviroLink Post Optimization</h1>
+
+        <?php if ($not_logged_in): ?>
+            <div class="warning">
+                <strong>ℹ️ NOTE:</strong> You're not logged into WordPress as an admin, but that's okay! The secret key provides authentication for this script.
+            </div>
+        <?php endif; ?>
 
         <?php if ($dry_run): ?>
             <div class="warning">
