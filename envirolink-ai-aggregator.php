@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.35.0
+ * Version: 1.36.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -4521,11 +4521,30 @@ CONTENT: [rewritten content]";
         $today_date = date('F j, Y'); // e.g., "November 3, 2025"
         $month_day = date('M j'); // e.g., "Nov 8"
 
-        // SEO-optimized meta description
-        $meta_description = 'Today\'s top environmental stories: climate action, wildlife conservation, renewable energy, and sustainability news from around the world. Updated ' . date('M j, Y') . '.';
+        // Dynamic title and description using top story preview (Option 4 style)
+        $article_count = count($articles);
+        $top_article = $articles[0]; // First article is the top story
+        $top_title = $top_article->post_title;
+
+        // Extract first sentence from top article content for description teaser
+        $top_content = strip_tags($top_article->post_content);
+        $sentences = preg_split('/(?<=[.!?])\s+/', $top_content, 2);
+        $first_sentence = !empty($sentences[0]) ? $sentences[0] : wp_trim_words($top_content, 15, '...');
+
+        // Create dynamic title with top story highlight
+        $dynamic_title = 'Environmental News Roundup: ' . $top_title;
+
+        // Create engaging meta description with preview, count, and CTA
+        $other_count = $article_count - 1; // Subtract the top story
+        $meta_description = $first_sentence . ' Plus: ' . $other_count . ' more stories on climate action, wildlife conservation, and green energy. Read the full roundup →';
+
+        // Trim to 155 characters for optimal SEO display in search results
+        if (strlen($meta_description) > 155) {
+            $meta_description = substr($meta_description, 0, 152) . '...';
+        }
 
         $post_data = array(
-            'post_title' => 'Environmental News Today: Climate, Wildlife & Conservation Updates [' . $month_day . ']',
+            'post_title' => $dynamic_title,
             'post_content' => $roundup_content,
             'post_status' => 'publish',
             'post_type' => 'post',
