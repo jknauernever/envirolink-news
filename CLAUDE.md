@@ -229,6 +229,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.36.0** (2025-11-08) - Dynamic roundup titles with top story preview
+- Changed from generic template to engaging content preview format
+- Title now highlights top story: "Environmental News Roundup: [Top Article Title]"
+- Description shows first sentence of top article + article count
+- Added clear CTA: "Read the full roundup →"
+- Much more clickable and human-readable while maintaining SEO value
+- Code changes: Lines 4524-4544
+
 **v1.35.0** (2025-11-08) - Add automatic alt text to all images for SEO/accessibility
 - Added automatic alt text generation for all featured images
 - RSS feed images get alt text based on post title (improves SEO and accessibility)
