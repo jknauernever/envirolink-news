@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.34.0
+ * Version: 1.35.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -4279,6 +4279,12 @@ class EnviroLink_AI_Aggregator {
 
         $this->log_message('    → Uploaded to media library (ID: ' . $attachment_id . ')');
 
+        // Add alt text for SEO and accessibility
+        $post_title = get_the_title($post_id);
+        $alt_text = !empty($post_title) ? $post_title : 'Environmental news image';
+        update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt_text);
+        $this->log_message('    → Added alt text: ' . $alt_text);
+
         // Set as featured image
         $result = set_post_thumbnail($post_id, $attachment_id);
 
@@ -4956,7 +4962,7 @@ Do NOT include a title - just the content.";
             update_post_meta($attachment_id, '_unsplash_photo_link', $image_data['photo_link']);
             update_post_meta($attachment_id, '_unsplash_link', $image_data['unsplash_link']);
             update_post_meta($attachment_id, '_wp_attached_file', $image_data['url']); // Store external URL
-            update_post_meta($attachment_id, '_wp_attachment_image_alt', 'Environmental photography');
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', 'Environmental news and nature photography from Unsplash');
 
             error_log('EnviroLink: [UNSPLASH] ✓ Created attachment (ID: ' . $attachment_id . ') with dimensions ' . $image_data['width'] . 'x' . $image_data['height']);
             return $attachment_id;
