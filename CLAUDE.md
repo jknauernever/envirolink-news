@@ -229,6 +229,17 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.37.0** (2025-11-09) - AI editorial metadata generation for professional roundups
+- AI generates professional editorial metadata (headline, dek, image_alt)
+- Multi-story hooks instead of single-story focus
+- Front-loaded keywords for better SEO and click-through rates
+- Date cadence included: "Today's Environmental Briefing — Nov 9, 2025"
+- NO source attribution - appears human-written by EnviroLink
+- Hybrid approach: AI generates headline/dek, PHP derives SEO fields
+- Robust fallback system with admin alerts and logging
+- Cost: ~$0.02-0.03 per roundup (minimal)
+- Code changes: Lines 4804-4926 (new AI method), Lines 4525-4584 (integration), Lines 271-283 (admin alert)
+
 **v1.36.0** (2025-11-08) - Dynamic roundup titles with top story preview
 - Changed from generic template to engaging content preview format
 - Title now highlights top story: "Environmental News Roundup: [Top Article Title]"
