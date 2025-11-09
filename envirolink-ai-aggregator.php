@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.38.0
+ * Version: 1.39.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -4710,7 +4710,8 @@ CONTENT: [rewritten content]";
             // STRATEGY 1: Unsplash (if enabled) - COMPLIANT WITH API GUIDELINES
             if ($auto_fetch_unsplash) {
                 $this->log_message('[UNSPLASH] Attempting to fetch from Unsplash...');
-                $unsplash_data = $this->fetch_unsplash_image();
+                // Pass roundup headline to get relevant image (instead of random generic photo)
+                $unsplash_data = $this->fetch_unsplash_image($post_title);
 
                 if ($unsplash_data) {
                     // Download and upload the image to WordPress media library (SAME AS FEED IMAGES)
@@ -5042,7 +5043,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
      *
      * Returns array with image data or false
      */
-    private function fetch_unsplash_image() {
+    private function fetch_unsplash_image($headline = null) {
         // Get Unsplash API key
         $api_key = get_option('envirolink_unsplash_api_key', '');
 
@@ -5051,19 +5052,118 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             return false;
         }
 
-        // Random environmental keywords for variety
-        $keywords = array(
-            'nature environment',
-            'climate earth',
-            'forest conservation',
-            'ocean wildlife',
-            'sustainable planet',
-            'green nature',
-            'environmental landscape'
+        // Extract keywords from headline for targeted image search
+        $query = null;
+        if ($headline) {
+            $query = $this->extract_image_keywords($headline);
+            if ($query) {
+                error_log('EnviroLink: [UNSPLASH] Extracted keywords from headline: ' . $query);
+
+                // Try fetching with specific keywords first
+                $result = $this->fetch_from_unsplash_api($api_key, $query);
+                if ($result) {
+                    return $result;
+                }
+
+                // If specific search failed, log and fall through to generic
+                error_log('EnviroLink: [UNSPLASH] ⚠ Specific keyword search failed, trying generic nature photo...');
+            }
+        }
+
+        // Fallback: Random generic nature keywords
+        $generic_keywords = array(
+            'nature landscape',
+            'forest trees',
+            'mountain wilderness',
+            'ocean water',
+            'wildlife animal',
+            'green plants',
+            'sunset sky',
+            'river stream'
         );
 
-        $query = $keywords[array_rand($keywords)];
+        $query = $generic_keywords[array_rand($generic_keywords)];
+        error_log('EnviroLink: [UNSPLASH] Using fallback generic query: ' . $query);
 
+        return $this->fetch_from_unsplash_api($api_key, $query);
+    }
+
+    /**
+     * Extract relevant keywords from headline for Unsplash image search
+     * Returns comma-separated keywords or null
+     */
+    private function extract_image_keywords($headline) {
+        // Remove common words and extract meaningful keywords
+        $headline = strtolower($headline);
+
+        // Remove date patterns, punctuation, and common filler words
+        $headline = preg_replace('/—.*$/', '', $headline); // Remove everything after em-dash (usually date)
+        $headline = preg_replace('/\[.*?\]/', '', $headline); // Remove bracketed text
+        $headline = preg_replace('/[^\w\s]/', ' ', $headline); // Remove punctuation
+
+        // Common words to ignore
+        $stop_words = array(
+            'today', 'todays', 'environmental', 'briefing', 'news', 'roundup', 'update', 'updates',
+            'daily', 'weekly', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+            'by', 'from', 'as', 'is', 'are', 'was', 'were', 'been', 'be', 'have', 'has', 'had',
+            'more', 'most', 'plus', 'stories', 'story'
+        );
+
+        // Visual/photogenic keywords to prioritize
+        $visual_keywords = array(
+            'fire', 'fires', 'wildfire', 'wildfires', 'smoke', 'flames',
+            'flood', 'flooding', 'water', 'ocean', 'sea', 'river', 'lake',
+            'forest', 'tree', 'trees', 'jungle', 'rainforest', 'amazon',
+            'mountain', 'mountains', 'glacier', 'ice', 'snow',
+            'wildlife', 'animal', 'animals', 'bird', 'birds', 'fish', 'whale', 'dolphin', 'bear', 'elephant',
+            'coral', 'reef', 'drought', 'desert', 'storm', 'hurricane', 'tornado',
+            'pollution', 'plastic', 'oil', 'spill', 'waste', 'toxic',
+            'solar', 'wind', 'energy', 'turbine', 'panel', 'panels',
+            'city', 'urban', 'protest', 'demonstration',
+            'farm', 'agriculture', 'crop', 'crops', 'field', 'fields'
+        );
+
+        // Split into words
+        $words = preg_split('/\s+/', $headline);
+        $keywords = array();
+
+        // Extract visual keywords first (priority)
+        foreach ($words as $word) {
+            $word = trim($word);
+            if (strlen($word) > 2 && !in_array($word, $stop_words) && in_array($word, $visual_keywords)) {
+                $keywords[] = $word;
+                if (count($keywords) >= 2) {
+                    break; // Max 2 keywords for better results
+                }
+            }
+        }
+
+        // If no visual keywords, take any meaningful words
+        if (empty($keywords)) {
+            foreach ($words as $word) {
+                $word = trim($word);
+                if (strlen($word) > 3 && !in_array($word, $stop_words)) {
+                    $keywords[] = $word;
+                    if (count($keywords) >= 2) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (empty($keywords)) {
+            return null;
+        }
+
+        // Return comma-separated keywords
+        return implode(' ', $keywords);
+    }
+
+    /**
+     * Fetch image from Unsplash API with given query
+     * Returns image data array or false
+     */
+    private function fetch_from_unsplash_api($api_key, $query) {
         error_log('EnviroLink: [UNSPLASH] Fetching image with query: ' . $query);
 
         // Fetch from Unsplash API
