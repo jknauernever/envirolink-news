@@ -229,6 +229,16 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.38.0** (2025-11-09) - Scheduled feed processing at 7am ET and 4pm ET only
+- Added time windows for automatic feed processing
+- Morning window: 6am-8am ET (centered on 7am)
+- Afternoon window: 3pm-5pm ET (centered on 4pm)
+- Outside windows: automatic runs skipped with logged message
+- Manual "Run All Feeds" button bypasses time restrictions (works anytime)
+- Admin display shows schedule in System Status
+- Better resource management and predictable publishing times
+- Code changes: Lines 3206-3238 (time check), Lines 438-446 (admin display)
+
 **v1.37.0** (2025-11-09) - AI editorial metadata generation for professional roundups
 - AI generates professional editorial metadata (headline, dek, image_alt)
 - Multi-story hooks instead of single-story focus
