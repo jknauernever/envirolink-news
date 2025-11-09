@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.36.0
+ * Version: 1.37.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -266,6 +266,20 @@ class EnviroLink_AI_Aggregator {
     public function admin_page() {
         if (!current_user_can('manage_options')) {
             return;
+        }
+
+        // Check for AI metadata generation failure and show warning
+        $metadata_failure = get_transient('envirolink_metadata_generation_failed');
+        if ($metadata_failure) {
+            echo '<div class="notice notice-warning is-dismissible">';
+            echo '<p><strong>⚠ AI Metadata Generation Failed</strong></p>';
+            echo '<p>The last roundup used fallback title/description because AI metadata generation failed.</p>';
+            echo '<p><strong>Time:</strong> ' . esc_html($metadata_failure['timestamp']) . '<br>';
+            echo '<strong>Error:</strong> ' . esc_html($metadata_failure['error']) . '</p>';
+            echo '<p>Check the roundup generation log below for details. This usually means the AI API is unavailable or returned invalid JSON.</p>';
+            echo '</div>';
+            // Clear the transient after showing it once
+            delete_transient('envirolink_metadata_generation_failed');
         }
 
         // Get search query (used in Articles tab)
@@ -4520,36 +4534,76 @@ CONTENT: [rewritten content]";
         $post_category = get_option('envirolink_post_category');
         $today_date = date('F j, Y'); // e.g., "November 3, 2025"
         $month_day = date('M j'); // e.g., "Nov 8"
+        $date_string = date('M j, Y'); // e.g., "Nov 8, 2025" for AI prompt
 
-        // Dynamic title and description using top story preview (Option 4 style)
-        $article_count = count($articles);
-        $top_article = $articles[0]; // First article is the top story
-        $top_title = $top_article->post_title;
+        // STEP 4a: Generate editorial metadata with AI (headline, dek, image_alt)
+        $this->log_message('→ Attempting AI editorial metadata generation...');
+        $ai_metadata = $this->generate_roundup_metadata_with_ai($article_summaries, $api_key, $date_string);
 
-        // Extract first sentence from top article content for description teaser
-        $top_content = strip_tags($top_article->post_content);
-        $sentences = preg_split('/(?<=[.!?])\s+/', $top_content, 2);
-        $first_sentence = !empty($sentences[0]) ? $sentences[0] : wp_trim_words($top_content, 15, '...');
+        // STEP 4b: Process AI metadata or fallback to simple format
+        if ($ai_metadata && isset($ai_metadata['headline']) && isset($ai_metadata['dek'])) {
+            // SUCCESS: Use AI-generated editorial metadata
+            $this->log_message('✓ Using AI-generated editorial metadata');
 
-        // Create dynamic title with top story highlight
-        $dynamic_title = 'Environmental News Roundup: ' . $top_title;
+            $post_title = $ai_metadata['headline'];
+            $dek = $ai_metadata['dek']; // This becomes post_excerpt
+            $image_alt_text = isset($ai_metadata['image_alt']) ? $ai_metadata['image_alt'] : 'Environmental news imagery';
 
-        // Create engaging meta description with preview, count, and CTA
-        $other_count = $article_count - 1; // Subtract the top story
-        $meta_description = $first_sentence . ' Plus: ' . $other_count . ' more stories on climate action, wildlife conservation, and green energy. Read the full roundup →';
+            // Derive SEO fields from AI-generated headline/dek (Hybrid Option B)
+            // SEO Title: Shorten headline if needed, optimize for 60 chars
+            $seo_title = strlen($post_title) <= 60 ? $post_title : substr($post_title, 0, 57) . '...';
 
-        // Trim to 155 characters for optimal SEO display in search results
-        if (strlen($meta_description) > 155) {
-            $meta_description = substr($meta_description, 0, 152) . '...';
+            // Meta Description: Use dek (already 35-55 words), trim to 160 chars max
+            $meta_description = strlen($dek) <= 160 ? $dek : substr($dek, 0, 157) . '...';
+
+            // OG Title: Use SEO title
+            $og_title = $seo_title;
+
+        } else {
+            // FALLBACK: AI generation failed, use v1.36.0 format
+            $this->log_message('⚠ AI metadata generation failed, using fallback format');
+            $this->log_message('⚠ WARNING: This roundup will use generic title/description');
+
+            // Store failure for admin alert
+            set_transient('envirolink_metadata_generation_failed', array(
+                'timestamp' => current_time('mysql'),
+                'error' => 'AI metadata generation returned false or incomplete data'
+            ), DAY_IN_SECONDS);
+
+            $article_count = count($articles);
+            $top_article = $articles[0];
+            $top_title = $top_article->post_title;
+
+            // Extract first sentence from top article content for description teaser
+            $top_content = strip_tags($top_article->post_content);
+            $sentences = preg_split('/(?<=[.!?])\s+/', $top_content, 2);
+            $first_sentence = !empty($sentences[0]) ? $sentences[0] : wp_trim_words($top_content, 15, '...');
+
+            // Create dynamic title with top story highlight
+            $post_title = 'Environmental News Roundup: ' . $top_title;
+
+            // Create engaging meta description with preview, count, and CTA
+            $other_count = $article_count - 1; // Subtract the top story
+            $dek = $first_sentence . ' Plus: ' . $other_count . ' more stories on climate action, wildlife conservation, and green energy. Read the full roundup →';
+
+            // Trim to 155 characters for optimal SEO display in search results
+            if (strlen($dek) > 155) {
+                $dek = substr($dek, 0, 152) . '...';
+            }
+
+            $meta_description = $dek;
+            $seo_title = strlen($post_title) <= 60 ? $post_title : substr($post_title, 0, 57) . '...';
+            $og_title = $seo_title;
+            $image_alt_text = 'Environmental news and nature photography';
         }
 
         $post_data = array(
-            'post_title' => $dynamic_title,
+            'post_title' => $post_title,
             'post_content' => $roundup_content,
             'post_status' => 'publish',
             'post_type' => 'post',
             'post_author' => $this->get_envirolink_editor_id(),
-            'post_excerpt' => $meta_description
+            'post_excerpt' => $dek
         );
 
         // Set categories: configured category + "Featured" (NOT newsfeed - roundups are editorial, not RSS)
@@ -4588,9 +4642,12 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
-            // Set AIOSEO meta for better SEO
+            // Set AIOSEO meta for better SEO (using AI-derived fields)
             if (function_exists('aioseo')) {
-                update_post_meta($post_id, '_aioseo_description', $meta_description);
+                update_post_meta($post_id, '_aioseo_title', $seo_title); // SEO title (≤60 chars)
+                update_post_meta($post_id, '_aioseo_description', $meta_description); // Meta description
+                update_post_meta($post_id, '_aioseo_og_title', $og_title); // Open Graph title
+                update_post_meta($post_id, '_aioseo_og_description', $meta_description); // OG description
                 update_post_meta($post_id, '_aioseo_og_article_section', 'Environment');
                 update_post_meta($post_id, '_aioseo_og_article_tags', 'environmental news,climate change,conservation,sustainability');
                 update_post_meta($post_id, '_aioseo_schema_type', 'Article');
@@ -4680,7 +4737,14 @@ CONTENT: [rewritten content]";
             // Note: Unsplash strategy already sets featured image via set_featured_image_from_url()
             if ($image_id && !$auto_fetch_unsplash) {
                 set_post_thumbnail($post_id, $image_id);
+                // Add AI-generated alt text to the image
+                update_post_meta($image_id, '_wp_attachment_image_alt', $image_alt_text);
                 $this->log_message('✓ Set featured image (ID: ' . $image_id . ') for roundup');
+                $this->log_message('   Alt text: ' . $image_alt_text);
+            } else if ($image_id && $auto_fetch_unsplash) {
+                // Unsplash images already set, just update alt text if we have AI-generated one
+                update_post_meta($image_id, '_wp_attachment_image_alt', $image_alt_text);
+                $this->log_message('✓ Updated Unsplash image alt text: ' . $image_alt_text);
             } else if (!$image_id) {
                 $this->log_message('✗ WARNING: No image available from any strategy');
                 $this->log_message('   To fix: Enable Unsplash auto-fetch OR upload images to manual collection');
@@ -4799,6 +4863,130 @@ Do NOT include a title - just the content.";
 
         // If parsing fails, return the raw content
         return $text;
+    }
+
+    /**
+     * Generate editorial metadata (headline, dek, image_alt) for roundup using AI
+     * Returns array with metadata or false on failure
+     */
+    private function generate_roundup_metadata_with_ai($articles, $api_key, $date_string) {
+        // Take top 3-5 stories for metadata generation
+        $top_stories = array_slice($articles, 0, min(5, count($articles)));
+
+        // Build story list (NO source attribution - appears human-written)
+        $stories_text = '';
+        foreach ($top_stories as $i => $story) {
+            $num = $i + 1;
+            $stories_text .= "\n{$num}. {$story['title']}";
+            $stories_text .= "\n   {$story['excerpt']}\n";
+        }
+
+        $prompt = "You are an editor-bot for EnviroLink (envirolink.org). Your job is to generate clickable, SEO-optimized headlines and summaries (\"deks\") for today's environmental news roundup.
+
+Editorial goals:
+- Make it obvious this is a multi-story roundup (not a single story)
+- Lead with a vivid anchor story; mention 1-2 secondary stories
+- Front-load high-value keywords within the first 8-10 words
+- Include cadence + date: \"Today's Environmental Briefing — {$date_string}\"
+- Use active voice, specific nouns/verbs, and clear geography/entities
+- No clickbait, no vague \"environmental news roundup\" as the only hook
+
+Style notes:
+- US headline case; no smart quotes; no emojis
+- Prefer concrete problem words: plastic pollution, oil spill, toxic algae, wildfire smoke, emissions, heatwave, drought, flooding, climate policy
+- If the top stories are weak, emphasize variety: \"...and more environmental headlines you need to know\"
+
+Safety & accuracy:
+- Don't overstate (\"millions\" → only if clearly indicated in the story)
+- Avoid \"world's worst/biggest\" unless explicitly stated
+- Geolocate (country/state/city) when present in stories
+
+Today's top environmental stories:
+{$stories_text}
+
+Generate JSON output with these exact fields:
+{{
+  \"headline\": \"Multi-story hook, ≤85 characters, includes date cadence\",
+  \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details\",
+  \"image_alt\": \"≤120 characters, plain-English description for lead story image\"
+}}
+
+IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the JSON object.";
+
+        $this->log_message('→ Generating editorial metadata with AI...');
+
+        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
+            'timeout' => 60,
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'x-api-key' => $api_key,
+                'anthropic-version' => '2023-06-01'
+            ),
+            'body' => json_encode(array(
+                'model' => 'claude-sonnet-4-20250514',
+                'max_tokens' => 1024,
+                'messages' => array(
+                    array(
+                        'role' => 'user',
+                        'content' => $prompt
+                    )
+                )
+            ))
+        ));
+
+        if (is_wp_error($response)) {
+            $this->log_message('✗ AI metadata generation failed: ' . $response->get_error_message());
+            error_log('EnviroLink: AI metadata generation error: ' . $response->get_error_message());
+            return false;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!isset($body['content'][0]['text'])) {
+            $this->log_message('✗ AI response missing content');
+            error_log('EnviroLink: AI metadata response missing content');
+            return false;
+        }
+
+        $text = $body['content'][0]['text'];
+
+        // Parse JSON response
+        // Remove markdown code blocks if present
+        $text = preg_replace('/```json\s*|\s*```/', '', $text);
+        $text = trim($text);
+
+        $metadata = json_decode($text, true);
+
+        if (!$metadata || !isset($metadata['headline']) || !isset($metadata['dek']) || !isset($metadata['image_alt'])) {
+            $this->log_message('✗ AI returned invalid JSON or missing required fields');
+            $this->log_message('   Raw response: ' . substr($text, 0, 200));
+            error_log('EnviroLink: AI metadata JSON parsing failed. Response: ' . $text);
+            return false;
+        }
+
+        // Validate character limits
+        if (strlen($metadata['headline']) > 100) {
+            $this->log_message('⚠ Headline too long (' . strlen($metadata['headline']) . ' chars), truncating...');
+            $metadata['headline'] = substr($metadata['headline'], 0, 97) . '...';
+        }
+
+        if (strlen($metadata['image_alt']) > 120) {
+            $this->log_message('⚠ Image alt too long (' . strlen($metadata['image_alt']) . ' chars), truncating...');
+            $metadata['image_alt'] = substr($metadata['image_alt'], 0, 117) . '...';
+        }
+
+        // Word count validation for dek (should be 35-55 words)
+        $dek_word_count = str_word_count($metadata['dek']);
+        if ($dek_word_count < 35 || $dek_word_count > 55) {
+            $this->log_message('⚠ Dek word count (' . $dek_word_count . ') outside 35-55 range');
+            // Don't reject, but log the warning
+        }
+
+        $this->log_message('✓ AI generated editorial metadata:');
+        $this->log_message('   Headline: ' . $metadata['headline']);
+        $this->log_message('   Dek: ' . substr($metadata['dek'], 0, 80) . '...');
+
+        return $metadata;
     }
 
     /**
