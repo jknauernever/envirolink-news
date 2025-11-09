@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.37.0
+ * Version: 1.38.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -432,6 +432,16 @@ class EnviroLink_AI_Aggregator {
                                     echo '<a href="' . wp_nonce_url(admin_url('admin.php?page=envirolink-aggregator&reschedule_cron=1'), 'envirolink_reschedule_cron') . '" class="button button-small" style="margin-top: 5px;">Schedule Cron</a>';
                                 }
                                 ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Feed Processing Schedule:</th>
+                            <td>
+                                <strong>Twice Daily:</strong> 7:00 AM ET and 4:00 PM ET
+                                <p class="description" style="margin-top: 5px;">
+                                    Feeds process during 2-hour windows: 6am-8am ET (morning) and 3pm-5pm ET (afternoon).
+                                    Manual runs via "Run All Feeds" button work at any time.
+                                </p>
                             </td>
                         </tr>
                         <tr>
@@ -3202,6 +3212,40 @@ class EnviroLink_AI_Aggregator {
         set_transient($lock_key, $lock_data, 120);
 
         error_log('EnviroLink: Lock acquired (PID: ' . $lock_data['pid'] . ', Type: ' . $lock_data['type'] . ')');
+
+        // SCHEDULED TIME CHECK: Only run feeds at 7am ET and 4pm ET (automatic runs only)
+        if (!$manual_run) {
+            // Get current time in Eastern Time
+            $eastern_tz = new DateTimeZone('America/New_York');
+            $now = new DateTime('now', $eastern_tz);
+            $current_hour = (int)$now->format('G'); // 0-23 hour format
+
+            // Define allowed time windows (with 30-minute tolerance on either side)
+            $morning_start = 6;   // 6:00 AM ET
+            $morning_end = 8;     // 8:00 AM ET (so 6am-8am = 2 hour window centered on 7am)
+            $afternoon_start = 15; // 3:00 PM ET
+            $afternoon_end = 17;   // 5:00 PM ET (so 3pm-5pm = 2 hour window centered on 4pm)
+
+            $is_morning_window = ($current_hour >= $morning_start && $current_hour < $morning_end);
+            $is_afternoon_window = ($current_hour >= $afternoon_start && $current_hour < $afternoon_end);
+
+            if (!$is_morning_window && !$is_afternoon_window) {
+                // Not in a scheduled window - skip processing
+                $current_time_str = $now->format('g:i A T');
+                error_log('EnviroLink: Skipping automatic feed run - outside scheduled windows (current: ' . $current_time_str . ')');
+                error_log('EnviroLink: Scheduled times: 7:00 AM ET (6am-8am window) and 4:00 PM ET (3pm-5pm window)');
+
+                delete_transient($lock_key); // Release lock
+                return array(
+                    'success' => false,
+                    'message' => 'Skipped - outside scheduled time windows (7am ET and 4pm ET). Current time: ' . $current_time_str
+                );
+            }
+
+            // Log which window we're in
+            $window_name = $is_morning_window ? 'morning (7am ET)' : 'afternoon (4pm ET)';
+            error_log('EnviroLink: Running in ' . $window_name . ' scheduled window');
+        }
 
         // Increase resource limits for long-running feed processing
         // Prevents timeouts when processing multiple articles with AI + image scraping
