@@ -1,6 +1,6 @@
 # CLAUDE CONTEXT - Quick Start Guide for Future Sessions
 
-**Last Updated:** 2025-11-09 (v1.38.0)
+**Last Updated:** 2025-11-09 (v1.39.0)
 **Purpose:** This file helps future Claude Code instances quickly understand the project status, deployment workflows, and recent changes.
 
 ---
@@ -277,6 +277,7 @@ Theme files are deployed manually to `/wp-content/themes/blocksy-child/` on the 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| v1.39.0 | 2025-11-09 | Intelligent Unsplash image selection (keywords from headlines, visual dictionary, fallback) |
 | v1.38.0 | 2025-11-09 | Scheduled feed processing at 7am ET and 4pm ET only (2-hour windows, manual override) |
 | v1.37.0 | 2025-11-09 | AI editorial metadata generation (professional multi-story headlines, no source attribution) |
 | v1.36.0 | 2025-11-08 | Dynamic roundup titles with top story preview (more clickable and human-readable) |

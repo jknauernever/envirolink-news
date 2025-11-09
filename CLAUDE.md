@@ -229,6 +229,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.39.0** (2025-11-09) - Intelligent Unsplash image selection from roundup headlines
+- Extracts keywords from AI-generated headlines for targeted image search
+- Prioritizes 50+ visual/photogenic keywords (fire, wildlife, ocean, pollution, etc.)
+- Two-tier fallback: specific keywords first, then generic nature photos
+- Dramatically improves image relevance to actual roundup content
+- Example: "Amazon Fires" headline → searches "fires amazon" on Unsplash
+- Code changes: Lines 5046-5241 (keyword extraction + refactored API)
+
 **v1.38.0** (2025-11-09) - Scheduled feed processing at 7am ET and 4pm ET only
 - Added time windows for automatic feed processing
 - Morning window: 6am-8am ET (centered on 7am)
