@@ -65,131 +65,22 @@
    SINGLE POST PAGE
    ============================================ */
 
-.envirolink-single-meta {
-    background: var(--theme-palette-color-8, #f9fafb);
-    border: 1px solid var(--theme-border-color, #e5e7eb);
-    border-radius: 12px;
-    padding: 24px;
-    margin: 32px 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.envirolink-meta-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 2px solid var(--theme-link-initial-color, #2c7a3e);
-}
-
-.envirolink-meta-header .envirolink-icon {
-    color: var(--theme-link-initial-color, #2c7a3e);
-    flex-shrink: 0;
-}
-
-.envirolink-meta-header h4 {
-    margin: 0;
-    font-size: 1.2em;
-    font-weight: 600;
-    color: var(--theme-heading-color, #1a1a1a);
-}
-
-.envirolink-meta-content {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.envirolink-meta-item {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: baseline;
-}
-
-.envirolink-meta-item .meta-label {
-    font-weight: 600;
-    font-size: 0.9em;
+.envirolink-source-attribution {
+    font-size: 0.75em;
     color: var(--theme-text-color);
-    opacity: 0.8;
-    min-width: 140px;
-}
-
-.envirolink-meta-item .meta-value {
-    font-size: 0.95em;
-    color: var(--theme-text-color);
-    flex: 1;
-}
-
-.envirolink-meta-source .meta-value a {
-    color: var(--theme-link-initial-color, #2c7a3e);
-    text-decoration: none;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.envirolink-meta-source .meta-value a:hover {
-    text-decoration: underline;
-}
-
-.envirolink-meta-source .external-link-icon {
     opacity: 0.6;
+    margin: 24px 0 0 0;
+    font-style: italic;
 }
 
-.envirolink-meta-tags {
-    align-items: flex-start;
+.envirolink-source-attribution a {
+    color: var(--theme-text-color);
+    text-decoration: underline;
+    opacity: 0.8;
 }
 
-.envirolink-meta-tags .meta-value {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.envirolink-topic-tag {
-    background: var(--theme-link-initial-color, #2c7a3e);
-    color: white;
-    padding: 4px 12px;
-    border-radius: 16px;
-    font-size: 0.85em;
-    font-weight: 500;
-    display: inline-block;
-    text-decoration: none;
-    transition: all 0.2s ease;
-}
-
-.envirolink-topic-tag:hover {
-    background: var(--theme-link-hover-color, #245c31);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(44, 122, 62, 0.4);
-    color: white;
-}
-
-.envirolink-meta-action {
-    margin-top: 8px;
-    padding-top: 16px;
-    border-top: 1px solid var(--theme-border-color, #e5e7eb);
-}
-
-.envirolink-read-original {
-    display: inline-block;
-    background: var(--theme-link-initial-color, #2c7a3e);
-    color: white !important;
-    padding: 12px 24px;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.95em;
-    transition: all 0.2s ease;
-}
-
-.envirolink-read-original:hover {
-    background: var(--theme-link-hover-color, #245c31);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(44, 122, 62, 0.3);
+.envirolink-source-attribution a:hover {
+    opacity: 1;
 }
 
 /* ============================================
@@ -197,26 +88,12 @@
    ============================================ */
 
 @media (max-width: 768px) {
-    .envirolink-single-meta {
-        padding: 20px;
-        margin: 24px 0;
-    }
-
-    .envirolink-meta-header h4 {
-        font-size: 1.1em;
-    }
-
-    .envirolink-meta-item {
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .envirolink-meta-item .meta-label {
-        min-width: auto;
-    }
-
     .envirolink-listing-meta {
         font-size: 0.8em;
+    }
+
+    .envirolink-source-attribution {
+        font-size: 0.7em;
     }
 }
 
@@ -224,15 +101,6 @@
    DARK MODE SUPPORT (if Blocksy has dark mode)
    ============================================ */
 
-[data-theme="dark"] .envirolink-single-meta {
-    background: #1a1a1a;
-    border-color: #333;
-}
-
 [data-theme="dark"] .envirolink-listing-meta {
-    border-color: #333;
-}
-
-[data-theme="dark"] .envirolink-meta-action {
     border-color: #333;
 }
