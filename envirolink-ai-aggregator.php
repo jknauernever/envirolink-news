@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.40.1
+ * Version: 1.40.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.40.1');
+define('ENVIROLINK_VERSION', '1.40.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2774,24 +2774,22 @@ class EnviroLink_AI_Aggregator {
      * Optimize title for SEO
      * - Removes excessive punctuation
      * - Ensures proper capitalization
-     * - Limits to 60 characters for search snippets
+     * - No truncation (displays full headline)
      */
     private function optimize_title_for_seo($title) {
         // Remove excessive punctuation
         $title = preg_replace('/[!]{2,}/', '!', $title);
         $title = preg_replace('/[?]{2,}/', '?', $title);
-        
+
         // Capitalize first letter of each sentence
         $title = ucfirst(strtolower($title));
         $title = preg_replace_callback('/([.!?]\s+)([a-z])/', function($matches) {
             return $matches[1] . strtoupper($matches[2]);
         }, $title);
-        
-        // Truncate if too long (Google displays ~60 chars)
-        if (strlen($title) > 70) {
-            $title = substr($title, 0, 67) . '...';
-        }
-        
+
+        // No truncation - display full headlines
+        // (Previously truncated at 70 chars, but user wants full headlines displayed)
+
         return $title;
     }
 
@@ -4367,7 +4365,7 @@ Original Content:
 {$content}
 
 Please provide:
-1. A new, compelling headline (max 80 characters)
+1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
 
 Keep the core facts and maintain journalistic integrity. Make it informative and accessible to a general audience interested in environmental issues.
