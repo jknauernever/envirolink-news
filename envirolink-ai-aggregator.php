@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.40.0
+ * Version: 1.40.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.40.0');
+define('ENVIROLINK_VERSION', '1.40.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4985,7 +4985,7 @@ Editorial requirements:
 - Front-load high-value keywords within the first 8-10 words
 - ALWAYS end with: \"— Today's Environmental Briefing for {$date_string}\"
 - Use active voice, specific nouns/verbs, and clear geography/entities
-- Keep headline ≤115 characters total
+- No character limit - full date must always be displayed
 - No clickbait, no vague \"environmental news roundup\" as the only hook
 
 Style notes:
@@ -5003,7 +5003,7 @@ Today's top environmental stories:
 
 Generate JSON output with these exact fields:
 {{
-  \"headline\": \"MUST include 2-3 stories separated by punctuation, ≤115 characters, end with '— Today's Environmental Briefing for {$date_string}'\",
+  \"headline\": \"MUST include 2-3 stories separated by punctuation, MUST end with full date '— Today's Environmental Briefing for {$date_string}' - no character limit\",
   \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details (can reference additional stories beyond headline)\",
   \"image_alt\": \"≤120 characters, plain-English description for lead story image\"
 }}
@@ -5061,11 +5061,10 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             return false;
         }
 
-        // Validate character limits
-        if (strlen($metadata['headline']) > 115) {
-            $this->log_message('⚠ Headline too long (' . strlen($metadata['headline']) . ' chars), truncating...');
-            $metadata['headline'] = substr($metadata['headline'], 0, 112) . '...';
-        }
+        // No character limit - user wants full date always displayed
+        // Log headline length for monitoring purposes only
+        $headline_length = strlen($metadata['headline']);
+        $this->log_message('ℹ Headline length: ' . $headline_length . ' characters');
 
         if (strlen($metadata['image_alt']) > 120) {
             $this->log_message('⚠ Image alt too long (' . strlen($metadata['image_alt']) . ' chars), truncating...');
