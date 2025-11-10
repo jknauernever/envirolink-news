@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.39.3
+ * Version: 1.40.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.39.3');
+define('ENVIROLINK_VERSION', '1.40.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4842,32 +4842,69 @@ CONTENT: [rewritten content]";
             $articles_text .= "\n   Summary: {$article['excerpt']}\n";
         }
 
-        $prompt = "You are writing the daily editorial roundup for EnviroLink.org, a respected environmental news website. Your role is to create a cohesive, humanistic editorial piece that connects the day's environmental news stories.
+        $prompt = "EnviroLink Daily Editorial Roundup – NPR Earth Briefing Style
+
+You are writing the daily editorial roundup for EnviroLink.org, a respected environmental news website known for trustworthy, accessible coverage.
+
+Your role is to create a cohesive, humanistic, and lightly interpretive piece that connects the day's environmental stories and helps readers understand what's happening, why it matters, and what it means for people and the planet.
 
 Here are today's environmental news articles:
 {$articles_text}
 
-Your task is to write a balanced, editorial-style roundup (400-600 words) that:
+✍️ Your Task
 
-1. Opens with a brief, engaging introduction (1-2 sentences)
-2. Connects the stories thematically rather than listing them separately
-3. Highlights key developments, trends, or patterns across the stories
-4. Maintains a balanced tone - not overly enthusiastic or pessimistic
-5. Writes in a warm, humanistic voice that sounds like passionate environmental journalists
-6. Avoids hyperbole and maintains journalistic credibility
-7. Ends with a brief reflection or forward-looking thought
+Write a 400–600 word editorial-style roundup that:
 
-Writing guidelines:
-- Use \"we\" when appropriate to create connection with readers
-- Be informative but accessible
-- Focus on what matters and why
-- Connect global issues to human impact where relevant
-- Acknowledge complexity - the environmental movement includes both challenges and progress
+Opens with a clear framing or insight (1–2 sentences) capturing the day's central thread or tension — what theme ties these stories together?
+
+Example: \"This week, the climate conversation shifted from goals to ground games — how to make change real in the places we live.\"
+
+Connects stories by theme, not by conflict.
+
+Draw out the systems or patterns: policy shifts, economic drivers, community responses, environmental signals.
+
+Interprets significance: Explain why these developments matter — what do they reveal about the state of climate action, biodiversity, or human adaptation?
+
+Includes human-scale moments — a quote, community story, or tangible impact if present in the sources.
+
+Example: \"For families along the coast, that means more nights spent watching tides creep closer to their doorsteps.\"
+
+Maintains a warm, explanatory tone that invites curiosity.
+
+Write like an informed journalist guiding readers through complex terrain, not a detached observer.
+
+Ends with reflection or a forward look — what to watch next, what questions remain, or how today's news fits into longer trends.
+
+🧭 Style and Tone
+
+Voice: Calm, compassionate, informed — like an NPR correspondent connecting dots in a story rather than listing headlines.
+
+Perspective: Observational and interpretive, not opinionated.
+
+Balance: Acknowledge complexity without manufacturing \"two sides.\" If genuine disagreement appears in sources, attribute it clearly and briefly.
+
+Language: Favor verbs of change — revealed, accelerated, signaled, deepened, challenged.
+
+Sentence flow: Mix short, clear sentences with occasional longer, reflective ones to create rhythm.
+
+🧩 Formatting
 
 Format your response as:
 CONTENT: [your editorial roundup]
 
-Do NOT include a title - just the content.";
+Do not include a title.
+
+🕊️ Extra cue phrases the model should naturally use
+
+\"Across the stories today, a common thread emerges…\"
+
+\"The day's coverage points to growing momentum around…\"
+
+\"It's a reminder that progress and pressure often arrive together.\"
+
+\"Behind the numbers are real communities adapting in real time.\"
+
+\"As the week unfolds, all eyes will be on…\"";
 
         $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
             'timeout' => 90, // Longer timeout for editorial content
