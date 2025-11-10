@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.39.2
+ * Version: 1.39.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.39.2');
+define('ENVIROLINK_VERSION', '1.39.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2733,7 +2733,7 @@ class EnviroLink_AI_Aggregator {
         if (!isset($progress['log'])) {
             $progress['log'] = array();
         }
-        $progress['log'][] = '[' . date('H:i:s') . '] ' . $message;
+        $progress['log'][] = '[' . wp_date('H:i:s') . '] ' . $message;
 
         // Keep only last 100 messages to avoid memory issues
         if (count($progress['log']) > 100) {
@@ -2764,7 +2764,7 @@ class EnviroLink_AI_Aggregator {
             // Fatal error occurred - save what we have
             $progress = get_transient('envirolink_progress');
             if ($progress && isset($progress['log'])) {
-                $progress['log'][] = '[' . date('H:i:s') . '] ✗ FATAL ERROR: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line'];
+                $progress['log'][] = '[' . wp_date('H:i:s') . '] ✗ FATAL ERROR: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line'];
                 update_option('envirolink_last_run_log', $progress['log']);
             }
         }
@@ -3362,7 +3362,7 @@ class EnviroLink_AI_Aggregator {
                 $original_title = $item->get_title();
 
                 // CRITICAL: Log with microsecond timestamp to detect race conditions
-                $timestamp = date('H:i:s') . '.' . substr(microtime(), 2, 3);
+                $timestamp = wp_date('H:i:s') . '.' . substr(microtime(), 2, 3);
                 $this->log_message('[' . $timestamp . '] Checking article: ' . $original_title);
                 $this->log_message('→ Source URL: ' . $original_link);
 
@@ -4434,7 +4434,7 @@ CONTENT: [rewritten content]";
 
         // Check if roundup already exists for today (only for automatic runs)
         if (!$manual_run) {
-            $today_title = 'Daily Environmental News Roundup by the EnviroLink Team - ' . date('F j, Y');
+            $today_title = 'Daily Environmental News Roundup by the EnviroLink Team - ' . wp_date('F j, Y');
             $existing_roundup = get_posts(array(
                 'post_type' => 'post',
                 'post_status' => 'publish',
@@ -4576,9 +4576,10 @@ CONTENT: [rewritten content]";
         $this->update_progress(array('percent' => 70, 'message' => 'Creating roundup post...'));
 
         $post_category = get_option('envirolink_post_category');
-        $today_date = date('F j, Y'); // e.g., "November 3, 2025"
-        $month_day = date('M j'); // e.g., "Nov 8"
-        $date_string = date('D, M j Y'); // e.g., "Sun, Nov 9 2025" for AI prompt
+        // Use WordPress timezone for dates (respects Settings → General → Timezone)
+        $today_date = wp_date('F j, Y'); // e.g., "November 3, 2025"
+        $month_day = wp_date('M j'); // e.g., "Nov 8"
+        $date_string = wp_date('D, M j Y'); // e.g., "Sun, Nov 9 2025" for AI prompt
 
         // STEP 4a: Generate editorial metadata with AI (headline, dek, image_alt)
         $this->log_message('→ Attempting AI editorial metadata generation...');
