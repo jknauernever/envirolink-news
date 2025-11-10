@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.40.2
+ * Version: 1.40.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.40.2');
+define('ENVIROLINK_VERSION', '1.40.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -5213,6 +5213,20 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
      * Returns image data array or false
      */
     private function fetch_from_unsplash_api($api_key, $query) {
+        // Add negative keywords to filter out weapons and military imagery
+        // User request: "I do not want images associated with weapons of war to be shown"
+        // Unsplash API supports negative keywords with minus sign prefix (e.g., "nature -gun -weapon")
+        $weapon_exclusions = array(
+            'gun', 'guns', 'weapon', 'weapons', 'cannon', 'cannons',
+            'tank', 'tanks', 'missile', 'missiles', 'military', 'war',
+            'soldier', 'soldiers', 'army', 'rifle', 'pistol', 'firearm',
+            'ammunition', 'combat', 'battle', 'naval', 'warship'
+        );
+
+        foreach ($weapon_exclusions as $exclude) {
+            $query .= ' -' . $exclude;
+        }
+
         error_log('EnviroLink: [UNSPLASH] Fetching image with query: ' . $query);
 
         // Fetch from Unsplash API
@@ -5251,6 +5265,20 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             return false;
         }
 
+        // SECONDARY FILTER: Check image description/tags for weapon-related content
+        // Even if API filtering worked, double-check the returned image metadata
+        $description = isset($body['description']) ? strtolower($body['description']) : '';
+        $alt_description = isset($body['alt_description']) ? strtolower($body['alt_description']) : '';
+        $combined_text = $description . ' ' . $alt_description;
+
+        $weapon_keywords = array('gun', 'cannon', 'weapon', 'tank', 'missile', 'military', 'war', 'soldier', 'army', 'rifle', 'pistol', 'firearm', 'ammunition');
+        foreach ($weapon_keywords as $keyword) {
+            if (strpos($combined_text, $keyword) !== false) {
+                error_log('EnviroLink: [UNSPLASH] ✗ Image rejected - contains weapon-related keyword: "' . $keyword . '" in description');
+                return false; // Reject this image and try again
+            }
+        }
+
         // Extract all required data
         $photo_id = $body['id'];
         $image_url = $body['urls']['regular'];
@@ -5261,7 +5289,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         $width = isset($body['width']) ? intval($body['width']) : 1920;
         $height = isset($body['height']) ? intval($body['height']) : 1280;
 
-        error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer_name . ' (ID: ' . $photo_id . ')');
+        error_log('EnviroLink: [UNSPLASH] ✓ Found image by ' . $photographer_name . ' (ID: ' . $photo_id . ') - weapon filter passed');
 
         // COMPLIANCE REQUIREMENT #2: Trigger download endpoint
         // This is REQUIRED by Unsplash API guidelines

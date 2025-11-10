@@ -1,5 +1,5 @@
 # EnviroLink.org Project Status
-**Last Updated:** November 8, 2025  
+**Last Updated:** November 10, 2025  
 **Project:** Website Traffic Growth Strategy  
 **Owner:** Josh Knauer  
 **Goal:** Grow from 2,600 to 10,000+ monthly users in 6 months
@@ -107,6 +107,37 @@
 
 **Documentation:** See SEO-IMPROVEMENTS.md for complete details
 
+### Phase 2.5: Ad Monetization Setup (Nov 10, 2025) - IN PROGRESS
+**Priority:** HIGH  
+**Status:** 🔄 IN PROGRESS  
+**Time Required:** 2-3 hours initial setup
+
+**Current Status:**
+- ✅ Adsterra account created and approved
+- ✅ Advanced Ads plugin installed and configured
+- ✅ Comprehensive setup guide created (ADSTERRA-SETUP-GUIDE.md)
+- ✅ wpadvancedads.com saved as trusted reference for ad optimization
+- ⏳ Creating 3 homepage ads with Adsterra codes
+- ⏳ Setting up 3 placements (header, sidebar, native)
+- ⏳ Configuring display conditions (homepage only)
+- ⏳ Testing in incognito mode
+- ⏳ Monitoring for 24-48 hours for ad population
+
+**Ad Strategy:**
+- **Header Ad:** 728x90 leaderboard or responsive banner
+- **Sidebar Ad:** 300x250 medium rectangle or 300x600 half page
+- **Native Ad:** Responsive in-content format
+
+**Expected Revenue:**
+- With ~2,600 monthly users = ~86 visitors/day
+- Minus ad blockers (30%) = ~60 ad impressions/day
+- At $2 CPM average = $0.12/day = $3.60/month initially
+- **As traffic grows to 10K:** $40-120/month potential
+
+**Documentation:** 
+- Complete setup guide: ADSTERRA-SETUP-GUIDE.md
+- Advanced Ads reference: wpadvancedads.com/manual/
+
 ### Phase 3: Social Media Launch (Week 3-4) - READY TO START
 **Priority:** HIGH  
 **Status:** ⏳ NOT STARTED  
@@ -162,12 +193,14 @@
 ## 🎯 IMMEDIATE PRIORITIES (This Week)
 
 ### Must Do Now:
-1. **Monitor Wordfence** - Check learning mode progress
-2. **Start SEO Optimization** - Install Yoast, optimize homepage
-3. **Create Social Accounts** - Twitter, LinkedIn minimum
-4. **Post First Social Content** - Share today's roundup
+1. **Complete Ad Setup** - Implement Adsterra ads using ADSTERRA-SETUP-GUIDE.md
+2. **Monitor Wordfence** - Check learning mode progress (full protection activates Nov 15)
+3. **Test Ads** - Verify all 3 ads display correctly on homepage (incognito mode)
+4. **Monitor Revenue** - Check Adsterra dashboard after 24-48 hours
 
 ### Can Wait 1-2 Weeks:
+- Start Social Media accounts (Twitter, LinkedIn)
+- Post first social content
 - Email list setup
 - Reddit strategy
 - Partnership outreach
@@ -238,11 +271,13 @@
 1. **GROWTH-STRATEGY.md** - Complete 6-month growth plan with all tactics
 2. **404-FIX-INSTRUCTIONS.md** - Bot blocking and analytics cleanup
 3. **PROJECT-STATUS.md** - This document (master status tracker)
-4. **CLAUDE-CONTEXT.md** - Technical documentation of codebase
+4. **ADSTERRA-SETUP-GUIDE.md** - Complete ad monetization setup guide
+5. **CLAUDE-CONTEXT.md** - Technical documentation of codebase
 
 ### Where to Find Information
 - **Full Strategy:** Read `GROWTH-STRATEGY.md` for detailed tactics
 - **Bot Fix Details:** Read `404-FIX-INSTRUCTIONS.md` for Wordfence setup
+- **Ad Setup:** Read `ADSTERRA-SETUP-GUIDE.md` for complete monetization guide
 - **Code Documentation:** Read `CLAUDE-CONTEXT.md` for technical details
 - **Current Status:** This file for project overview and next steps
 
