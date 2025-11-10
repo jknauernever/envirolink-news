@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.39.1
+ * Version: 1.39.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.39.1');
+define('ENVIROLINK_VERSION', '1.39.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4578,7 +4578,7 @@ CONTENT: [rewritten content]";
         $post_category = get_option('envirolink_post_category');
         $today_date = date('F j, Y'); // e.g., "November 3, 2025"
         $month_day = date('M j'); // e.g., "Nov 8"
-        $date_string = date('M j, Y'); // e.g., "Nov 8, 2025" for AI prompt
+        $date_string = date('D, M j Y'); // e.g., "Sun, Nov 9 2025" for AI prompt
 
         // STEP 4a: Generate editorial metadata with AI (headline, dek, image_alt)
         $this->log_message('→ Attempting AI editorial metadata generation...');
@@ -4928,18 +4928,32 @@ Do NOT include a title - just the content.";
 
         $prompt = "You are an editor-bot for EnviroLink (envirolink.org). Your job is to generate clickable, SEO-optimized headlines and summaries (\"deks\") for today's environmental news roundup.
 
-Editorial goals:
-- Make it obvious this is a multi-story roundup (not a single story)
-- Lead with a vivid anchor story; mention 1-2 secondary stories
+CRITICAL REQUIREMENT - MULTI-STORY HEADLINES:
+Your headline MUST reference AT LEAST 2 different stories from the list below. Single-story headlines are FORBIDDEN and will be rejected. The reader must immediately understand this is a roundup of multiple environmental stories, not coverage of one story.
+
+Examples of GOOD multi-story headlines:
+✓ \"Amazon Fires Surge, UK Blocks New Drilling — Today's Environmental Briefing for {$date_string}\"
+✓ \"Coral Bleaching Accelerates While Solar Adoption Hits Record — Today's Environmental Briefing for {$date_string}\"
+✓ \"EPA Tightens Air Rules, Australian Floods Displace Thousands — Today's Environmental Briefing for {$date_string}\"
+
+Examples of BAD single-story headlines (FORBIDDEN):
+✗ \"UK Planning Reforms Favor Developers Over Ecologists — Today's Environmental Briefing for {$date_string}\"
+✗ \"New Climate Report Shows Alarming Warming Trends — Today's Environmental Briefing for {$date_string}\"
+✗ \"Biden Administration Announces Major Conservation Initiative — Today's Environmental Briefing for {$date_string}\"
+
+Editorial requirements:
+- MANDATORY: Include 2-3 distinct stories in the headline (use commas, semicolons, or \"while/as\" to separate)
+- Lead with the most vivid/visual story first (fires, floods, wildlife > policy, reports)
 - Front-load high-value keywords within the first 8-10 words
-- Include cadence + date: \"Today's Environmental Briefing — {$date_string}\"
+- ALWAYS end with: \"— Today's Environmental Briefing for {$date_string}\"
 - Use active voice, specific nouns/verbs, and clear geography/entities
+- Keep headline ≤115 characters total
 - No clickbait, no vague \"environmental news roundup\" as the only hook
 
 Style notes:
 - US headline case; no smart quotes; no emojis
-- Prefer concrete problem words: plastic pollution, oil spill, toxic algae, wildfire smoke, emissions, heatwave, drought, flooding, climate policy
-- If the top stories are weak, emphasize variety: \"...and more environmental headlines you need to know\"
+- Prefer concrete problem words: fires, floods, drilling, plastic, oil spill, toxic, wildfire, smoke, emissions, heatwave, drought, bleaching
+- Connect stories with: comma + conjunction, semicolons, or \"while/as\" for contrast
 
 Safety & accuracy:
 - Don't overstate (\"millions\" → only if clearly indicated in the story)
@@ -4951,8 +4965,8 @@ Today's top environmental stories:
 
 Generate JSON output with these exact fields:
 {{
-  \"headline\": \"Multi-story hook, ≤85 characters, includes date cadence\",
-  \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details\",
+  \"headline\": \"MUST include 2-3 stories separated by punctuation, ≤115 characters, end with '— Today's Environmental Briefing for {$date_string}'\",
+  \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details (can reference additional stories beyond headline)\",
   \"image_alt\": \"≤120 characters, plain-English description for lead story image\"
 }}
 
@@ -5010,9 +5024,9 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         }
 
         // Validate character limits
-        if (strlen($metadata['headline']) > 100) {
+        if (strlen($metadata['headline']) > 115) {
             $this->log_message('⚠ Headline too long (' . strlen($metadata['headline']) . ' chars), truncating...');
-            $metadata['headline'] = substr($metadata['headline'], 0, 97) . '...';
+            $metadata['headline'] = substr($metadata['headline'], 0, 112) . '...';
         }
 
         if (strlen($metadata['image_alt']) > 120) {
