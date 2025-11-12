@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.40.3
+ * Version: 1.40.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.40.3');
+define('ENVIROLINK_VERSION', '1.40.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4703,6 +4703,7 @@ CONTENT: [rewritten content]";
             $this->update_progress(array('percent' => 90, 'message' => 'Adding featured image...'));
 
             $image_id = false;
+            $unsplash_succeeded = false; // Track if Unsplash actually worked (not just enabled)
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
@@ -4739,6 +4740,7 @@ CONTENT: [rewritten content]";
                             'unsplash_link' => $unsplash_data['unsplash_link']
                         ));
 
+                        $unsplash_succeeded = true; // Mark success
                         $this->log_message('[UNSPLASH] ✓ Downloaded and set as featured image (ID: ' . $image_id . ')');
                     } else {
                         $this->log_message('[UNSPLASH] ✗ Failed to download/upload Unsplash image');
@@ -4779,14 +4781,15 @@ CONTENT: [rewritten content]";
 
             // Set the featured image if we have one (from manual or fallback strategies)
             // Note: Unsplash strategy already sets featured image via set_featured_image_from_url()
-            if ($image_id && !$auto_fetch_unsplash) {
+            if ($image_id && !$unsplash_succeeded) {
+                // Manual or fallback strategy - need to set the thumbnail
                 set_post_thumbnail($post_id, $image_id);
                 // Add AI-generated alt text to the image
                 update_post_meta($image_id, '_wp_attachment_image_alt', $image_alt_text);
                 $this->log_message('✓ Set featured image (ID: ' . $image_id . ') for roundup');
                 $this->log_message('   Alt text: ' . $image_alt_text);
-            } else if ($image_id && $auto_fetch_unsplash) {
-                // Unsplash images already set, just update alt text if we have AI-generated one
+            } else if ($image_id && $unsplash_succeeded) {
+                // Unsplash succeeded and already set the image, just update alt text
                 update_post_meta($image_id, '_wp_attachment_image_alt', $image_alt_text);
                 $this->log_message('✓ Updated Unsplash image alt text: ' . $image_alt_text);
             } else if (!$image_id) {
