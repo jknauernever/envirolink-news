@@ -229,6 +229,35 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.43.0** (2025-11-13) - NEW FEATURE: Per-feed Pexels image search with keyword extraction
+- **Per-Feed Image Control:** New checkbox per feed: "Use Pexels images instead of RSS"
+  - Configure in Feed Edit Settings modal
+  - Enabled only for feeds where RSS images are poor quality (e.g., Guardian)
+  - Disabled by default - preserves good RSS images (e.g., Mongabay)
+- **Pexels API Integration:**
+  - New API key field in Settings tab
+  - Free tier: 200 requests/hour (plenty for typical usage)
+  - `fetch_from_pexels_api()` method (line 5502)
+  - `fetch_pexels_image()` method with keyword extraction (line 5266)
+- **Intelligent Keyword Extraction:**
+  - Reuses existing `extract_image_keywords()` from roundups
+  - Extracts keywords from AI-rewritten article title
+  - Prioritizes visual/photogenic terms (fire, ocean, wildlife, etc.)
+  - Fallback to generic nature photos if specific search fails
+- **Roundup Images Switched to Pexels:**
+  - Changed from Unsplash to Pexels for daily roundups
+  - Uses same keyword extraction system
+  - Better image variety and quality
+  - Pexels attribution stored in post metadata
+- **Article Processing Integration:**
+  - Checks feed setting before image extraction (line 3617)
+  - If enabled: searches Pexels with article title keywords
+  - If disabled or failed: uses RSS image as before
+  - Seamless fallback to RSS images
+- **User Request:** "I hate Guardian's photos" - now Guardian can use Pexels!
+- **Files Changed:** Settings UI, feed config, API methods, processing logic
+- Code changes: Lines 625-638 (Settings), 1056-1070 (Feed UI), 3616-3629 (Article integration), 4876-4917 (Roundup), 5266-5309 (Pexels method), 5502-5570 (API)
+
 **v1.42.0** (2025-11-13) - CRITICAL FIX: Enterprise-grade PID-based locking eliminates ALL duplicates
 - **ROOT CAUSE IDENTIFIED:** Three race conditions were causing duplicates:
   1. Lock timeout (120s) was too short - processing often took 3-4 minutes

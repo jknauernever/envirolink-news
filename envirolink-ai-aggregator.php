@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.42.0
+ * Version: 1.43.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.42.0');
+define('ENVIROLINK_VERSION', '1.43.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -107,7 +107,8 @@ class EnviroLink_AI_Aggregator {
                 'include_author' => true,
                 'include_pubdate' => true,
                 'include_topic_tags' => true,
-                'include_locations' => true
+                'include_locations' => true,
+                'use_pexels_images' => false
             )
         );
         
@@ -118,7 +119,11 @@ class EnviroLink_AI_Aggregator {
         if (!get_option('envirolink_api_key')) {
             add_option('envirolink_api_key', '');
         }
-        
+
+        if (!get_option('envirolink_pexels_api_key')) {
+            add_option('envirolink_pexels_api_key', '');
+        }
+
         if (!get_option('envirolink_post_category')) {
             add_option('envirolink_post_category', '');
         }
@@ -257,6 +262,7 @@ class EnviroLink_AI_Aggregator {
     public function register_settings() {
         register_setting('envirolink_settings', 'envirolink_feeds');
         register_setting('envirolink_settings', 'envirolink_api_key');
+        register_setting('envirolink_settings', 'envirolink_pexels_api_key');
         register_setting('envirolink_settings', 'envirolink_post_category');
         register_setting('envirolink_settings', 'envirolink_post_status');
         register_setting('envirolink_settings', 'envirolink_update_existing');
@@ -293,6 +299,7 @@ class EnviroLink_AI_Aggregator {
             check_admin_referer('envirolink_settings');
 
             update_option('envirolink_api_key', sanitize_text_field($_POST['api_key']));
+            update_option('envirolink_pexels_api_key', sanitize_text_field($_POST['pexels_api_key']));
             update_option('envirolink_post_category', absint($_POST['post_category']));
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
@@ -331,7 +338,8 @@ class EnviroLink_AI_Aggregator {
                 'include_author' => isset($_POST['include_author']),
                 'include_pubdate' => isset($_POST['include_pubdate']),
                 'include_topic_tags' => isset($_POST['include_topic_tags']),
-                'include_locations' => isset($_POST['include_locations'])
+                'include_locations' => isset($_POST['include_locations']),
+                'use_pexels_images' => false  // Default to false, can be enabled in Edit Settings
             );
             update_option('envirolink_feeds', $feeds);
             
@@ -394,6 +402,7 @@ class EnviroLink_AI_Aggregator {
                 $feeds[$index]['include_pubdate'] = isset($_POST['include_pubdate']);
                 $feeds[$index]['include_topic_tags'] = isset($_POST['include_topic_tags']);
                 $feeds[$index]['include_locations'] = isset($_POST['include_locations']);
+                $feeds[$index]['use_pexels_images'] = isset($_POST['use_pexels_images']);
                 update_option('envirolink_feeds', $feeds);
                 echo '<div class="notice notice-success"><p>Feed settings updated!</p></div>';
             }
@@ -613,15 +622,30 @@ class EnviroLink_AI_Aggregator {
                                 <label for="api_key">Anthropic API Key</label>
                             </th>
                             <td>
-                                <input type="password" id="api_key" name="api_key" 
-                                       value="<?php echo esc_attr($api_key); ?>" 
+                                <input type="password" id="api_key" name="api_key"
+                                       value="<?php echo esc_attr($api_key); ?>"
                                        class="regular-text" />
                                 <p class="description">
                                     Get your API key from <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
                                 </p>
                             </td>
                         </tr>
-                        
+
+                        <tr>
+                            <th scope="row">
+                                <label for="pexels_api_key">Pexels API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="pexels_api_key" name="pexels_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_pexels_api_key', '')); ?>"
+                                       class="regular-text" />
+                                <p class="description">
+                                    Get your free API key from <a href="https://www.pexels.com/api/" target="_blank">pexels.com/api</a><br>
+                                    Used to search for relevant images when enabled per-feed
+                                </p>
+                            </td>
+                        </tr>
+
                         <tr>
                             <th scope="row">
                                 <label for="post_category">Default Category</label>
@@ -920,6 +944,7 @@ class EnviroLink_AI_Aggregator {
                                 $include_pubdate = isset($feed['include_pubdate']) ? $feed['include_pubdate'] : true;
                                 $include_topic_tags = isset($feed['include_topic_tags']) ? $feed['include_topic_tags'] : true;
                                 $include_locations = isset($feed['include_locations']) ? $feed['include_locations'] : true;
+                                $use_pexels_images = isset($feed['use_pexels_images']) ? $feed['use_pexels_images'] : false;
 
                                 $schedule_label = $schedule_type === 'hourly' ? 'hour' :
                                                  ($schedule_type === 'daily' ? 'day' :
@@ -959,7 +984,8 @@ class EnviroLink_AI_Aggregator {
                                                 data-include-author="<?php echo $include_author ? '1' : '0'; ?>"
                                                 data-include-pubdate="<?php echo $include_pubdate ? '1' : '0'; ?>"
                                                 data-include-topic-tags="<?php echo $include_topic_tags ? '1' : '0'; ?>"
-                                                data-include-locations="<?php echo $include_locations ? '1' : '0'; ?>">
+                                                data-include-locations="<?php echo $include_locations ? '1' : '0'; ?>"
+                                                data-use-pexels-images="<?php echo $use_pexels_images ? '1' : '0'; ?>">
                                             Edit Settings
                                         </button>
 
@@ -1030,6 +1056,21 @@ class EnviroLink_AI_Aggregator {
                                             </label>
                                         </fieldset>
                                         <p class="description">Select which metadata fields to extract and store</p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">
+                                        Image Settings
+                                    </th>
+                                    <td>
+                                        <label>
+                                            <input type="checkbox" name="use_pexels_images" id="edit-use-pexels-images" value="1" />
+                                            Use Pexels images instead of RSS images
+                                        </label>
+                                        <p class="description">
+                                            When enabled, searches Pexels for relevant images using article keywords instead of using images from the RSS feed.<br>
+                                            <strong>Requires Pexels API key</strong> (configure in Settings tab)
+                                        </p>
                                     </td>
                                 </tr>
                             </table>
@@ -1381,6 +1422,7 @@ class EnviroLink_AI_Aggregator {
                 var includePubdate = $(this).data('include-pubdate') == '1';
                 var includeTopicTags = $(this).data('include-topic-tags') == '1';
                 var includeLocations = $(this).data('include-locations') == '1';
+                var usePexelsImages = $(this).data('use-pexels-images') == '1';
 
                 $('#edit-feed-index').val(index);
                 $('#edit-schedule-type').val(scheduleType);
@@ -1389,6 +1431,7 @@ class EnviroLink_AI_Aggregator {
                 $('#edit-include-pubdate').prop('checked', includePubdate);
                 $('#edit-include-topic-tags').prop('checked', includeTopicTags);
                 $('#edit-include-locations').prop('checked', includeLocations);
+                $('#edit-use-pexels-images').prop('checked', usePexelsImages);
 
                 $('#edit-schedule-modal').fadeIn();
             });
@@ -3570,6 +3613,21 @@ class EnviroLink_AI_Aggregator {
                     $image_url = $this->extract_image_from_url($original_link);
                 }
 
+                // Check if this feed is configured to use Pexels images
+                $use_pexels = isset($feed['use_pexels_images']) && $feed['use_pexels_images'];
+
+                if ($use_pexels) {
+                    $this->log_message('→ Feed configured to use Pexels images, searching...');
+                    $pexels_data = $this->fetch_pexels_image($rewritten['title']);
+
+                    if ($pexels_data) {
+                        $this->log_message('→ ✓ Found Pexels image, will use instead of RSS image');
+                        $image_url = $pexels_data['url'];
+                    } else {
+                        $this->log_message('→ ✗ Pexels search failed, falling back to RSS image (if any)');
+                    }
+                }
+
                 // Extract publication date (always needed for post_date)
                 $original_pubdate = $item->get_date('c'); // Get in ISO 8601 format
 
@@ -4830,24 +4888,24 @@ CONTENT: [rewritten content]";
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
-            // STRATEGY 1: Unsplash (if enabled) - COMPLIANT WITH API GUIDELINES
+            // STRATEGY 1: Pexels (if enabled)
             if ($auto_fetch_unsplash) {
-                $this->log_message('[UNSPLASH] Attempting to fetch from Unsplash...');
+                $this->log_message('[PEXELS] Attempting to fetch from Pexels...');
                 // Pass roundup headline to get relevant image (instead of random generic photo)
-                $unsplash_data = $this->fetch_unsplash_image($post_title);
+                $pexels_data = $this->fetch_pexels_image($post_title);
 
-                if ($unsplash_data) {
+                if ($pexels_data) {
                     // Download and upload the image to WordPress media library (SAME AS FEED IMAGES)
-                    $this->log_message('[UNSPLASH] Downloading image: ' . $unsplash_data['url']);
-                    $image_id = $this->set_featured_image_from_url($unsplash_data['url'], $post_id);
+                    $this->log_message('[PEXELS] Downloading image: ' . $pexels_data['url']);
+                    $image_id = $this->set_featured_image_from_url($pexels_data['url'], $post_id);
 
                     if ($image_id) {
-                        // Update attachment metadata with Unsplash attribution
+                        // Update attachment metadata with Pexels attribution
                         $caption = sprintf(
-                            'Photo by <a href="%s" target="_blank" rel="noopener">%s</a> on <a href="%s" target="_blank" rel="noopener">Unsplash</a>',
-                            esc_url($unsplash_data['photo_link']),
-                            esc_html($unsplash_data['photographer_name']),
-                            esc_url($unsplash_data['unsplash_link'])
+                            'Photo by <a href="%s" target="_blank" rel="noopener">%s</a> on <a href="%s" target="_blank" rel="noopener">Pexels</a>',
+                            esc_url($pexels_data['photo_link']),
+                            esc_html($pexels_data['photographer_name']),
+                            esc_url($pexels_data['pexels_link'])
                         );
 
                         wp_update_post(array(
@@ -4856,23 +4914,22 @@ CONTENT: [rewritten content]";
                         ));
 
                         // Store attribution data on the POST
-                        update_post_meta($post_id, '_unsplash_attribution', array(
-                            'photographer_name' => $unsplash_data['photographer_name'],
-                            'photographer_username' => $unsplash_data['photographer_username'],
-                            'photo_link' => $unsplash_data['photo_link'],
-                            'unsplash_link' => $unsplash_data['unsplash_link']
+                        update_post_meta($post_id, '_pexels_attribution', array(
+                            'photographer_name' => $pexels_data['photographer_name'],
+                            'photo_link' => $pexels_data['photo_link'],
+                            'pexels_link' => $pexels_data['pexels_link']
                         ));
 
-                        $unsplash_succeeded = true; // Mark success
-                        $this->log_message('[UNSPLASH] ✓ Downloaded and set as featured image (ID: ' . $image_id . ')');
+                        $unsplash_succeeded = true; // Mark success (variable name kept for backward compat)
+                        $this->log_message('[PEXELS] ✓ Downloaded and set as featured image (ID: ' . $image_id . ')');
                     } else {
-                        $this->log_message('[UNSPLASH] ✗ Failed to download/upload Unsplash image');
+                        $this->log_message('[PEXELS] ✗ Failed to download/upload Pexels image');
                     }
                 } else {
-                    $this->log_message('[UNSPLASH] ✗ Unsplash fetch failed (check error logs for details)');
+                    $this->log_message('[PEXELS] ✗ Pexels fetch failed (check error logs for details)');
                 }
             } else {
-                $this->log_message('[UNSPLASH] Auto-fetch is disabled');
+                $this->log_message('[PEXELS] Auto-fetch is disabled');
             }
 
             // STRATEGY 2: Manual collection (if Unsplash disabled or failed)
@@ -5217,13 +5274,57 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
     }
 
     /**
-     * Fetch environmental image from Unsplash API
-     * COMPLIANT with Unsplash API Guidelines for production approval:
-     * 1. Hotlinks image (doesn't download to server)
-     * 2. Triggers download endpoint for tracking
-     * 3. Stores attribution data for display
-     *
+     * Fetch environmental image from Pexels API
      * Returns array with image data or false
+     */
+    private function fetch_pexels_image($headline = null) {
+        // Get Pexels API key
+        $api_key = get_option('envirolink_pexels_api_key', '');
+
+        if (empty($api_key)) {
+            error_log('EnviroLink: [PEXELS] ✗ API key not configured. Please add your Pexels API Key in Settings.');
+            return false;
+        }
+
+        // Extract keywords from headline for targeted image search
+        $query = null;
+        if ($headline) {
+            $query = $this->extract_image_keywords($headline);
+            if ($query) {
+                error_log('EnviroLink: [PEXELS] Extracted keywords from headline: ' . $query);
+
+                // Try fetching with specific keywords first
+                $result = $this->fetch_from_pexels_api($api_key, $query);
+                if ($result) {
+                    return $result;
+                }
+
+                // If specific search failed, log and fall through to generic
+                error_log('EnviroLink: [PEXELS] ⚠ Specific keyword search failed, trying generic nature photo...');
+            }
+        }
+
+        // Fallback: Random generic nature keywords
+        $generic_keywords = array(
+            'nature landscape',
+            'forest trees',
+            'mountain wilderness',
+            'ocean water',
+            'wildlife animal',
+            'green plants',
+            'sunset sky',
+            'river stream'
+        );
+
+        $query = $generic_keywords[array_rand($generic_keywords)];
+        error_log('EnviroLink: [PEXELS] Using fallback generic query: ' . $query);
+
+        return $this->fetch_from_pexels_api($api_key, $query);
+    }
+
+    /**
+     * Fetch environmental image from Unsplash API (DEPRECATED - use Pexels)
+     * Kept for backward compatibility
      */
     private function fetch_unsplash_image($headline = null) {
         // Get Unsplash API key
@@ -5447,6 +5548,82 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             'unsplash_link' => 'https://unsplash.com/?utm_source=envirolink_news&utm_medium=referral',
             'width' => $width,
             'height' => $height
+        );
+    }
+
+    /**
+     * Fetch image from Pexels API
+     * @param string $api_key Pexels API key
+     * @param string $query Search query (keywords)
+     * Returns image data array or false
+     */
+    private function fetch_from_pexels_api($api_key, $query) {
+        error_log('EnviroLink: [PEXELS] Fetching image with query: ' . $query);
+
+        // Fetch from Pexels API
+        $response = wp_remote_get('https://api.pexels.com/v1/search?' . http_build_query(array(
+            'query' => $query,
+            'orientation' => 'landscape',
+            'per_page' => 1  // Get 1 random result
+        )), array(
+            'timeout' => 15,
+            'headers' => array(
+                'Authorization' => $api_key
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('EnviroLink: [PEXELS] ✗ API error: ' . $response->get_error_message());
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        // Check for API errors
+        if ($status_code !== 200) {
+            $error_msg = isset($body['error']) ? $body['error'] : 'Unknown error';
+            error_log('EnviroLink: [PEXELS] ✗ API returned status ' . $status_code . ': ' . $error_msg);
+            if ($status_code === 401) {
+                error_log('EnviroLink: [PEXELS] ✗ Authorization failed. Check if your API key is correct.');
+            }
+            return false;
+        }
+
+        if (!isset($body['photos']) || empty($body['photos'])) {
+            error_log('EnviroLink: [PEXELS] ✗ No images found for query: ' . $query);
+            return false;
+        }
+
+        // Get first result
+        $photo = $body['photos'][0];
+
+        if (!isset($photo['src']['large']) || !isset($photo['id'])) {
+            error_log('EnviroLink: [PEXELS] ✗ Response missing required data');
+            return false;
+        }
+
+        // Extract all required data
+        $photo_id = $photo['id'];
+        $image_url = $photo['src']['large'];  // Use 'large' size (good quality, not huge)
+        $photographer_name = isset($photo['photographer']) ? $photo['photographer'] : 'Unknown';
+        $photo_link = isset($photo['url']) ? $photo['url'] : '';
+        $width = isset($photo['width']) ? intval($photo['width']) : 1920;
+        $height = isset($photo['height']) ? intval($photo['height']) : 1280;
+        $alt = isset($photo['alt']) ? $photo['alt'] : '';
+
+        error_log('EnviroLink: [PEXELS] ✓ Found image by ' . $photographer_name . ' (ID: ' . $photo_id . ')');
+
+        // Return image data
+        return array(
+            'url' => $image_url,
+            'photo_id' => $photo_id,
+            'photographer_name' => $photographer_name,
+            'photo_link' => $photo_link,
+            'pexels_link' => 'https://www.pexels.com',
+            'width' => $width,
+            'height' => $height,
+            'alt' => $alt
         );
     }
 
