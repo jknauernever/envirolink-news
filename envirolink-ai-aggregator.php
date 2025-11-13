@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.43.1
+ * Version: 1.43.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.43.1');
+define('ENVIROLINK_VERSION', '1.43.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3836,9 +3836,15 @@ class EnviroLink_AI_Aggregator {
                         // Transition to desired post status (triggers Jetpack Social hooks)
                         // Only transition if status should be 'publish', otherwise leave as draft
                         if ($post_status === 'publish') {
+                            // CRITICAL: Always use current time when publishing to prevent "Scheduled" status
+                            // WordPress auto-marks posts as 'future' if post_date is ahead of server time
+                            // This can happen due to timezone differences in RSS feeds
+                            $current_time = current_time('mysql');
                             wp_update_post(array(
                                 'ID' => $post_id,
-                                'post_status' => 'publish'
+                                'post_status' => 'publish',
+                                'post_date' => $current_time,
+                                'post_date_gmt' => get_gmt_from_date($current_time)
                             ));
                             $this->log_message('→ Published post (triggers Jetpack Social sharing)');
                         } else {

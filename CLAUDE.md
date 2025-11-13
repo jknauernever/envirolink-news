@@ -229,7 +229,24 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.43.1** (2025-11-13) - CRITICAL FIX: Prevent scheduled posts and fix category assignment
+**v1.43.2** (2025-11-13) - CRITICAL FIX: Force current time on publish to prevent "Scheduled" status
+- **Root Cause:** v1.43.1 attempted to fix scheduled posts but timezone comparison was insufficient
+- **The Problem:** WordPress automatically marks posts as 'future' status if post_date > server time
+  - RSS feeds provide dates with timezone info (e.g., "2024-11-13T15:00:00+00:00")
+  - Timezone differences between RSS and server caused posts to appear "in the future"
+  - Even with date checking, `wp_update_post()` didn't re-send the corrected date
+  - WordPress saw future date and auto-changed 'publish' to 'future' status
+- **The Fix:** Always force current time when transitioning to 'publish' status
+  - Added explicit `post_date` and `post_date_gmt` to `wp_update_post()` call
+  - Uses `current_time('mysql')` to guarantee date is never in the future
+  - Eliminates timezone comparison complexity - just use "now"
+  - Code: Lines 3839-3848
+- **Impact:** Posts always publish immediately, never marked "Scheduled"
+- **Tradeoff:** Posts use current server time instead of RSS pubdate for display order
+  - RSS pubdate still stored in metadata for reference
+  - Ensures consistent, predictable publishing behavior
+
+**v1.43.1** (2025-11-13) - CRITICAL FIX: Prevent scheduled posts and fix category assignment (INCOMPLETE)
 - **Future-Date Fix:** Posts no longer get "Scheduled" status when RSS has future dates
   - Checks if RSS pubDate is in the future
   - If future: uses current time instead (publishes immediately)
