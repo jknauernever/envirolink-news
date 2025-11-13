@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.41.3
+ * Version: 1.42.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.41.3');
+define('ENVIROLINK_VERSION', '1.42.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3184,33 +3184,48 @@ class EnviroLink_AI_Aggregator {
      */
     public function fetch_and_process_feeds($manual_run = false, $specific_feed_index = null) {
         // CRITICAL: Prevent concurrent executions that cause duplicates
-        // Check if another instance is already running
+        // Use PID-based liveness check instead of timeout-based lock
         $lock_key = 'envirolink_processing_lock';
         $lock_data = get_transient($lock_key);
 
         if ($lock_data) {
-            // Another instance is running - skip this execution (applies to ALL runs)
+            // Lock exists - check if the process is actually still alive
             $run_type = $manual_run ? 'manual run' : 'CRON run';
             $lock_age = time() - $lock_data['start_time'];
-            $lock_pid = isset($lock_data['pid']) ? $lock_data['pid'] : 'unknown';
+            $lock_pid = isset($lock_data['pid']) ? $lock_data['pid'] : null;
+            $last_heartbeat = isset($lock_data['last_heartbeat']) ? $lock_data['last_heartbeat'] : $lock_data['start_time'];
+            $heartbeat_age = time() - $last_heartbeat;
 
-            error_log('EnviroLink: Skipping ' . $run_type . ' - another instance is already processing');
-            error_log('EnviroLink: Lock held by PID ' . $lock_pid . ' for ' . $lock_age . ' seconds');
+            if ($lock_pid && $this->is_process_alive($lock_pid)) {
+                // Process is ALIVE - respect the lock (no matter how long it's been running)
+                error_log('EnviroLink: Skipping ' . $run_type . ' - PID ' . $lock_pid . ' is still alive and processing');
+                error_log('EnviroLink: Lock age: ' . $lock_age . 's, Last heartbeat: ' . $heartbeat_age . 's ago');
 
-            return array(
-                'success' => false,
-                'message' => 'Another instance is already running (PID: ' . $lock_pid . ', ' . $lock_age . 's). Please wait and try again.'
-            );
+                return array(
+                    'success' => false,
+                    'message' => 'Another instance is actively running (PID: ' . $lock_pid . ', running for ' . $lock_age . 's). Please wait and try again.'
+                );
+            } else {
+                // Process is DEAD or missing - this is a stale lock, clear it
+                if ($lock_pid) {
+                    error_log('EnviroLink: Clearing stale lock (PID ' . $lock_pid . ' is dead/missing after ' . $lock_age . 's)');
+                } else {
+                    error_log('EnviroLink: Clearing corrupted lock (no PID found)');
+                }
+                delete_transient($lock_key);
+                // Continue to acquire new lock below
+            }
         }
 
-        // Set lock for 2 minutes (120 seconds) - shorter timeout prevents long waits if process crashes
-        // Store start time and process ID for debugging
+        // Acquire new lock with heartbeat tracking
+        // Set generous timeout (30 minutes) as fallback - PID check is primary safety
         $lock_data = array(
             'start_time' => time(),
+            'last_heartbeat' => time(),
             'pid' => getmypid(),
             'type' => $manual_run ? 'manual' : 'cron'
         );
-        set_transient($lock_key, $lock_data, 120);
+        set_transient($lock_key, $lock_data, 1800); // 30 minutes fallback timeout
 
         error_log('EnviroLink: Lock acquired (PID: ' . $lock_data['pid'] . ', Type: ' . $lock_data['type'] . ')');
 
@@ -3348,6 +3363,11 @@ class EnviroLink_AI_Aggregator {
             foreach ($items as $item) {
                 $total_processed++;
                 $articles_processed++;
+
+                // Update lock heartbeat every 5 articles to keep lock fresh during long runs
+                if ($articles_processed % 5 == 0) {
+                    $this->update_lock_heartbeat();
+                }
 
                 // Update progress
                 $percent = floor(($articles_processed / $total_articles) * 100);
@@ -3699,30 +3719,34 @@ class EnviroLink_AI_Aggregator {
                         continue; // Skip this article
                     }
 
+                    // CRITICAL FIX: Use meta_input to store metadata ATOMICALLY with post creation
+                    // This eliminates the race condition where post exists but metadata doesn't
+                    $post_data['meta_input'] = array(
+                        'envirolink_source_url' => $original_link,
+                        'envirolink_source_name' => $feed['name'],
+                        'envirolink_original_title' => $original_title,
+                        'envirolink_content_hash' => $content_hash
+                    );
+
+                    // Add feed metadata to meta_input if present
+                    if (isset($feed_metadata['author'])) {
+                        $post_data['meta_input']['envirolink_author'] = $feed_metadata['author'];
+                    }
+                    if (isset($feed_metadata['pubdate'])) {
+                        $post_data['meta_input']['envirolink_pubdate'] = $feed_metadata['pubdate'];
+                    }
+                    if (isset($feed_metadata['topic_tags'])) {
+                        $post_data['meta_input']['envirolink_topic_tags'] = $feed_metadata['topic_tags'];
+                    }
+                    if (isset($feed_metadata['locations'])) {
+                        $post_data['meta_input']['envirolink_locations'] = $feed_metadata['locations'];
+                    }
+
                     $post_id = wp_insert_post($post_data);
 
                     if ($post_id) {
                         $this->log_message('→ Created new post successfully (Post ID: ' . $post_id . ')');
-                        // Store metadata
-                        update_post_meta($post_id, 'envirolink_source_url', $original_link);
-                        update_post_meta($post_id, 'envirolink_source_name', $feed['name']);
-                        update_post_meta($post_id, 'envirolink_original_title', $original_title);
-                        update_post_meta($post_id, 'envirolink_content_hash', $content_hash);
-                        $this->log_message('→ Stored source URL for duplicate detection: ' . $original_link);
-
-                        // Store feed metadata
-                        if (isset($feed_metadata['author'])) {
-                            update_post_meta($post_id, 'envirolink_author', $feed_metadata['author']);
-                        }
-                        if (isset($feed_metadata['pubdate'])) {
-                            update_post_meta($post_id, 'envirolink_pubdate', $feed_metadata['pubdate']);
-                        }
-                        if (isset($feed_metadata['topic_tags'])) {
-                            update_post_meta($post_id, 'envirolink_topic_tags', $feed_metadata['topic_tags']);
-                        }
-                        if (isset($feed_metadata['locations'])) {
-                            update_post_meta($post_id, 'envirolink_locations', $feed_metadata['locations']);
-                        }
+                        $this->log_message('→ Stored source URL atomically for duplicate detection: ' . $original_link);
 
                         // Convert topic tags to WordPress tags
                         if (isset($feed_metadata['topic_tags'])) {
@@ -3816,6 +3840,57 @@ class EnviroLink_AI_Aggregator {
             'success' => true,
             'message' => $message
         );
+    }
+
+    /**
+     * Check if a process ID is still alive
+     * Cross-platform: works on Unix/Linux and Windows
+     *
+     * @param int $pid Process ID to check
+     * @return bool True if process is running, false if dead/doesn't exist
+     */
+    private function is_process_alive($pid) {
+        if (empty($pid) || !is_numeric($pid)) {
+            return false;
+        }
+
+        // Unix/Linux/Mac: Use posix_kill with signal 0 (check only, doesn't actually kill)
+        if (function_exists('posix_kill')) {
+            return posix_kill($pid, 0);
+        }
+
+        // Windows fallback: Use shell command
+        if (stripos(PHP_OS, 'WIN') === 0) {
+            $output = array();
+            exec("tasklist /FI \"PID eq $pid\" /NH 2>NUL", $output);
+            return count($output) > 0 && strpos($output[0], (string)$pid) !== false;
+        }
+
+        // Generic Unix fallback: Check if /proc/PID exists (Linux)
+        if (file_exists('/proc/' . $pid)) {
+            return true;
+        }
+
+        // Last resort: Try ps command
+        $output = array();
+        exec("ps -p $pid 2>/dev/null", $output);
+        return count($output) > 1; // More than just header line
+    }
+
+    /**
+     * Update lock heartbeat to prevent stale lock detection
+     * Call this periodically during long-running operations
+     */
+    private function update_lock_heartbeat() {
+        $lock_key = 'envirolink_processing_lock';
+        $lock_data = get_transient($lock_key);
+
+        if ($lock_data && isset($lock_data['pid']) && $lock_data['pid'] == getmypid()) {
+            // Only update if we own the lock
+            $lock_data['last_heartbeat'] = time();
+            set_transient($lock_key, $lock_data, 1800); // Extend to 30 minutes
+            error_log('EnviroLink: Lock heartbeat updated (PID: ' . $lock_data['pid'] . ')');
+        }
     }
 
     /**
