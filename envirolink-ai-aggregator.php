@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.41.0
+ * Version: 1.41.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.41.0');
+define('ENVIROLINK_VERSION', '1.41.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -86,6 +86,9 @@ class EnviroLink_AI_Aggregator {
         if (get_option('envirolink_randomize_daily_order', 'no') === 'yes') {
             add_filter('posts_orderby', array($this, 'randomize_daily_order'), 10, 2);
         }
+
+        // Jetpack Social (Publicize) integration
+        add_filter('publicize_should_publicize_published_post', array($this, 'enable_jetpack_publicize_for_envirolink'), 10, 2);
     }
     
     /**
@@ -3622,11 +3625,13 @@ class EnviroLink_AI_Aggregator {
                     // Create new post using original publication date
                     // Optimize title for SEO (remove excessive punctuation, proper capitalization)
                     $optimized_title = $this->optimize_title_for_seo($rewritten['title']);
-                    
+
+                    // IMPORTANT: Create as 'draft' first, then transition to desired status
+                    // This triggers Jetpack Social's publish hooks properly
                     $post_data = array(
                         'post_title' => $optimized_title,
                         'post_content' => $rewritten['content'],
-                        'post_status' => $post_status,
+                        'post_status' => 'draft', // Always start as draft
                         'post_type' => 'post',
                         'post_author' => $this->get_envirolink_editor_id()
                     );
@@ -3731,8 +3736,17 @@ class EnviroLink_AI_Aggregator {
                             update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
                         }
 
-                        // Trigger Jetpack Social sharing for programmatically created posts
-                        $this->trigger_jetpack_social_sharing($post_id);
+                        // Transition to desired post status (triggers Jetpack Social hooks)
+                        // Only transition if status should be 'publish', otherwise leave as draft
+                        if ($post_status === 'publish') {
+                            wp_update_post(array(
+                                'ID' => $post_id,
+                                'post_status' => 'publish'
+                            ));
+                            $this->log_message('→ Published post (triggers Jetpack Social sharing)');
+                        } else {
+                            $this->log_message('→ Post saved as draft (per settings)');
+                        }
 
                         $total_created++;
                     }
@@ -4357,35 +4371,27 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
-     * Trigger Jetpack Social (Publicize) sharing for programmatically created posts
+     * Ensure Jetpack Social (Publicize) works with EnviroLink posts
      *
-     * EnviroLink posts are created via wp_insert_post() which bypasses normal WordPress
-     * publishing hooks that Jetpack uses. This method manually triggers Jetpack Social
-     * sharing so posts are automatically shared to connected social networks.
+     * This filter ensures Jetpack Publicize shares EnviroLink posts. We create posts
+     * as 'draft' first, then use wp_update_post() to transition to 'publish', which
+     * triggers Jetpack's normal publish hooks. This filter ensures Jetpack accepts them.
      */
-    private function trigger_jetpack_social_sharing($post_id) {
-        // Check if Jetpack Publicize is available
-        if (!class_exists('Publicize')) {
-            // Jetpack Social/Publicize not active
-            return;
+    public function enable_jetpack_publicize_for_envirolink($should_publicize, $post) {
+        if (!$post) {
+            return $should_publicize;
         }
 
-        // Get the post to verify it's published
-        $post = get_post($post_id);
-        if (!$post || $post->post_status !== 'publish') {
-            // Only share published posts
-            return;
+        // Check if this is an EnviroLink post (has our metadata)
+        $is_envirolink_post = get_post_meta($post->ID, 'envirolink_source_url', true)
+                            || get_post_meta($post->ID, 'envirolink_is_roundup', true);
+
+        // If it's an EnviroLink post, always allow Publicize
+        if ($is_envirolink_post) {
+            return true;
         }
 
-        // Trigger Jetpack's publicize action for this post
-        // This is the same action Jetpack listens to for normal post publishing
-        do_action('publicize_post', $post_id);
-
-        // Alternative: Use the transition_post_status hook that Jetpack also listens to
-        // This simulates the post transitioning to 'publish' status
-        do_action('transition_post_status', 'publish', 'publish', $post);
-
-        error_log('EnviroLink: Triggered Jetpack Social sharing for post ID ' . $post_id);
+        return $should_publicize;
     }
 
     /**
@@ -4675,10 +4681,12 @@ CONTENT: [rewritten content]";
             $image_alt_text = 'Environmental news and nature photography';
         }
 
+        // IMPORTANT: Create as 'draft' first, then transition to 'publish'
+        // This triggers Jetpack Social's publish hooks properly
         $post_data = array(
             'post_title' => $post_title,
             'post_content' => $roundup_content,
-            'post_status' => 'publish',
+            'post_status' => 'draft', // Always start as draft
             'post_type' => 'post',
             'post_author' => $this->get_envirolink_editor_id(),
             'post_excerpt' => $dek
@@ -4832,8 +4840,12 @@ CONTENT: [rewritten content]";
                 $this->log_message('   To fix: Enable Unsplash auto-fetch OR upload images to manual collection');
             }
 
-            // Trigger Jetpack Social sharing for programmatically created roundup posts
-            $this->trigger_jetpack_social_sharing($post_id);
+            // Transition roundup from draft to publish (triggers Jetpack Social hooks)
+            wp_update_post(array(
+                'ID' => $post_id,
+                'post_status' => 'publish'
+            ));
+            $this->log_message('✓ Published roundup (triggers Jetpack Social sharing)');
 
             $this->log_message('');
             $this->log_message('=== ROUNDUP COMPLETE ===');

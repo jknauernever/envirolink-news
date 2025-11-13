@@ -229,6 +229,21 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.41.1** (2025-11-12) - CRITICAL FIX: Jetpack Social auto-sharing now works
+- Fixed Jetpack Social/Publicize integration for programmatically created posts
+- Posts now created as 'draft' first, then transitioned to 'publish' via `wp_update_post()`
+- This triggers Jetpack's `transition_post_status` hook properly (wp_insert_post bypasses it)
+- Added `publicize_should_publicize_published_post` filter to ensure EnviroLink posts are shared
+- Removed broken `trigger_jetpack_social_sharing()` method that didn't work
+- Applies to both regular articles and daily roundups
+- Posts will now auto-share to all connected social networks (Facebook, Twitter, etc.)
+- Code changes: Lines 90-91 (filter hook), Lines 4366-4381 (new filter method), Lines 3634+3741-3749 (article creation), Lines 4689+4843-4848 (roundup creation)
+
+**v1.41.0** (2025-11-12) - Attempted Jetpack Social integration (BROKEN - fixed in v1.41.1)
+- Initial attempt to add Jetpack Social sharing using `do_action()` calls
+- Did not work - posts were not shared to social networks
+- Fixed in v1.41.1 with proper draft-then-publish pattern
+
 **v1.39.0** (2025-11-09) - Intelligent Unsplash image selection from roundup headlines
 - Extracts keywords from AI-generated headlines for targeted image search
 - Prioritizes 50+ visual/photogenic keywords (fire, wildlife, ocean, pollution, etc.)
