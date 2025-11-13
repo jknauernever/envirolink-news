@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.40.4
+ * Version: 1.41.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.40.4');
+define('ENVIROLINK_VERSION', '1.41.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3731,6 +3731,9 @@ class EnviroLink_AI_Aggregator {
                             update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
                         }
 
+                        // Trigger Jetpack Social sharing for programmatically created posts
+                        $this->trigger_jetpack_social_sharing($post_id);
+
                         $total_created++;
                     }
                 }
@@ -4354,6 +4357,38 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * Trigger Jetpack Social (Publicize) sharing for programmatically created posts
+     *
+     * EnviroLink posts are created via wp_insert_post() which bypasses normal WordPress
+     * publishing hooks that Jetpack uses. This method manually triggers Jetpack Social
+     * sharing so posts are automatically shared to connected social networks.
+     */
+    private function trigger_jetpack_social_sharing($post_id) {
+        // Check if Jetpack Publicize is available
+        if (!class_exists('Publicize')) {
+            // Jetpack Social/Publicize not active
+            return;
+        }
+
+        // Get the post to verify it's published
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish') {
+            // Only share published posts
+            return;
+        }
+
+        // Trigger Jetpack's publicize action for this post
+        // This is the same action Jetpack listens to for normal post publishing
+        do_action('publicize_post', $post_id);
+
+        // Alternative: Use the transition_post_status hook that Jetpack also listens to
+        // This simulates the post transitioning to 'publish' status
+        do_action('transition_post_status', 'publish', 'publish', $post);
+
+        error_log('EnviroLink: Triggered Jetpack Social sharing for post ID ' . $post_id);
+    }
+
+    /**
      * Rewrite content using Anthropic API
      */
     private function rewrite_with_ai($title, $content, $api_key) {
@@ -4796,6 +4831,9 @@ CONTENT: [rewritten content]";
                 $this->log_message('✗ WARNING: No image available from any strategy');
                 $this->log_message('   To fix: Enable Unsplash auto-fetch OR upload images to manual collection');
             }
+
+            // Trigger Jetpack Social sharing for programmatically created roundup posts
+            $this->trigger_jetpack_social_sharing($post_id);
 
             $this->log_message('');
             $this->log_message('=== ROUNDUP COMPLETE ===');
