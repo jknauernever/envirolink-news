@@ -229,6 +229,27 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.43.1** (2025-11-13) - CRITICAL FIX: Prevent scheduled posts and fix category assignment
+- **Future-Date Fix:** Posts no longer get "Scheduled" status when RSS has future dates
+  - Checks if RSS pubDate is in the future
+  - If future: uses current time instead (publishes immediately)
+  - If past/present: uses RSS date (preserves chronology)
+  - Prevents posts from being invisible on frontend
+  - Code: Lines 3722-3741
+- **Category Fix:** All RSS articles now get ONLY "newsfeed" category
+  - Removed automatic addition of configured default category
+  - User request: "All posts that aren't Daily Roundups should be Newsfeed"
+  - Prevents double-categorization (Featured + newsfeed)
+  - Code: Lines 3743-3763
+- **Duplicate Detection Confirmed:** Individual feed button uses SAME code path
+  - ajax_run_feed() calls fetch_and_process_feeds() with feed index
+  - All duplicate detection, PID locking, and race condition protections apply
+  - No difference in behavior between "Run All Feeds" and individual feed buttons
+- **Issue Identified:** Guardian RSS sometimes has timestamps ahead of server time
+  - UTC vs local time zone differences
+  - Pre-scheduled articles with future publish times
+  - Now handled gracefully with immediate publish
+
 **v1.43.0** (2025-11-13) - NEW FEATURE: Per-feed Pexels image search with keyword extraction
 - **Per-Feed Image Control:** New checkbox per feed: "Use Pexels images instead of RSS"
   - Configure in Feed Edit Settings modal

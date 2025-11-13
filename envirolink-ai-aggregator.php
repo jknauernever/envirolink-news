@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.43.0
+ * Version: 1.43.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.43.0');
+define('ENVIROLINK_VERSION', '1.43.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3719,20 +3719,30 @@ class EnviroLink_AI_Aggregator {
                     );
 
                     // Use original RSS publication date if available
+                    // CRITICAL FIX: If RSS date is in the future, use current time instead
+                    // This prevents posts from being "Scheduled" instead of "Published"
                     if (!empty($original_pubdate)) {
                         $timestamp = strtotime($original_pubdate);
+                        $now = time();
+
                         if ($timestamp !== false) {
-                            $pub_date = date('Y-m-d H:i:s', $timestamp);
+                            // Check if date is in the future
+                            if ($timestamp <= $now) {
+                                // Past or present - use RSS date
+                                $pub_date = date('Y-m-d H:i:s', $timestamp);
+                            } else {
+                                // Future date - use current time instead to publish immediately
+                                $pub_date = current_time('mysql');
+                                $this->log_message('→ RSS date is in future, using current time to publish immediately');
+                            }
                             $post_data['post_date'] = $pub_date;
                             $post_data['post_date_gmt'] = get_gmt_from_date($pub_date);
                         }
                     }
 
-                    // Set categories: configured category + "newsfeed" category
+                    // Set categories: ONLY "newsfeed" (no configured default category)
+                    // User request: "All posts that aren't Daily Roundups should be Newsfeed"
                     $categories = array();
-                    if ($post_category) {
-                        $categories[] = $post_category;
-                    }
 
                     // Get or create "newsfeed" category
                     $newsfeed_cat = get_category_by_slug('newsfeed');
