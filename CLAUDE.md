@@ -229,6 +229,19 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.41.3** (2025-11-12) - CRITICAL FIX: Admin tools now handle scheduled posts correctly
+- Fixed ALL admin tools to properly find scheduled/future posts
+- Previously all admin tools only looked for 'publish' status, missing scheduled posts
+- **Affected tools (all fixed):**
+  - Cleanup Duplicates (line 2139)
+  - Categorize Posts (lines 2359, 2369, 2377)
+  - Update Authors (lines 2574, 2583, 2590)
+  - Fix Post Dates (line 3091)
+- All now use `'post_status' => 'any'` to check ALL statuses: publish, future, draft, pending, private
+- **Impact:** Cleanup tool will now find and remove scheduled duplicate posts
+- **User reported:** "Does the clean duplicates button also do the same thing?" - Yes, it had the same bug!
+- Code changes: Lines 2139, 2359, 2369, 2377, 2574, 2583, 2590, 3091 (8 total queries fixed)
+
 **v1.41.2** (2025-11-12) - CRITICAL FIX: Scheduled posts were being duplicated
 - Fixed duplicate detection to include ALL post statuses (publish, future, draft, pending)
 - Previous versions only checked for 'publish' status, missing scheduled/future posts

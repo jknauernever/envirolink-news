@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.41.2
+ * Version: 1.41.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.41.2');
+define('ENVIROLINK_VERSION', '1.41.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2130,13 +2130,13 @@ class EnviroLink_AI_Aggregator {
             'percent' => 0
         ));
 
-        // Get all EnviroLink posts
+        // Get all EnviroLink posts (including scheduled posts!)
         $args = array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         );
 
         $posts = get_posts($args);
@@ -2350,31 +2350,31 @@ class EnviroLink_AI_Aggregator {
         // Get all EnviroLink posts (both RSS aggregated AND roundups)
         // Strategy: Get RSS posts + roundup posts separately, then merge
 
-        // Get RSS-aggregated posts
+        // Get RSS-aggregated posts (including scheduled posts!)
         $rss_posts = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
-        // Get roundup posts (with metadata)
+        // Get roundup posts (with metadata, including scheduled!)
         $roundup_posts_meta = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_is_roundup',
             'meta_value' => 'yes',
             'meta_compare' => '=',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
-        // Get roundup posts (by title pattern - for older posts without metadata)
+        // Get roundup posts (by title pattern - for older posts without metadata, including scheduled!)
         $roundup_posts_title = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             's' => 'Daily Environmental News Roundup',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
         // Merge all posts and remove duplicates
@@ -2565,13 +2565,13 @@ class EnviroLink_AI_Aggregator {
             $this->log_message('✓ Found existing EnviroLink Editor user (ID: ' . $editor_user_id . ')');
         }
 
-        // Get all EnviroLink posts (RSS + roundups)
+        // Get all EnviroLink posts (RSS + roundups, including scheduled!)
         $rss_posts = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
         $roundup_posts_meta = get_posts(array(
@@ -2580,14 +2580,14 @@ class EnviroLink_AI_Aggregator {
             'meta_key' => 'envirolink_is_roundup',
             'meta_value' => 'yes',
             'meta_compare' => '=',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
         $roundup_posts_title = get_posts(array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             's' => 'Daily Environmental News Roundup',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         ));
 
         // Merge all posts and remove duplicates
@@ -3082,13 +3082,13 @@ class EnviroLink_AI_Aggregator {
     private function fix_post_dates() {
         $this->log_message('Starting post date synchronization...');
 
-        // Get all EnviroLink posts
+        // Get all EnviroLink posts (including scheduled posts!)
         $args = array(
             'post_type' => 'post',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS',
-            'post_status' => array('publish', 'draft', 'pending', 'private')
+            'post_status' => 'any' // Check ALL statuses: publish, future, draft, pending, private
         );
 
         $posts = get_posts($args);
