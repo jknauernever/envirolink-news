@@ -229,6 +229,19 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.41.2** (2025-11-12) - CRITICAL FIX: Scheduled posts were being duplicated
+- Fixed duplicate detection to include ALL post statuses (publish, future, draft, pending)
+- Previous versions only checked for 'publish' status, missing scheduled/future posts
+- This caused scheduled posts to be duplicated when running aggregator multiple times
+- Added `'post_status' => 'any'` to three key duplicate detection queries:
+  - Line 3379: Initial exact URL match check
+  - Line 3394: Normalized URL comparison check
+  - Line 3683: Final race condition safety check
+- Now properly detects duplicates regardless of post status
+- **Why this happened:** WordPress default for `get_posts()` is `post_status = 'publish'`
+- **User scenario:** Running "Run All Feeds" multiple times created duplicates of scheduled posts
+- Code changes: Lines 3379, 3394, 3683 (added post_status parameter)
+
 **v1.41.1** (2025-11-12) - CRITICAL FIX: Jetpack Social auto-sharing now works
 - Fixed Jetpack Social/Publicize integration for programmatically created posts
 - Posts now created as 'draft' first, then transitioned to 'publish' via `wp_update_post()`

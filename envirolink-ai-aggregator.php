@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.41.1
+ * Version: 1.41.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.41.1');
+define('ENVIROLINK_VERSION', '1.41.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3372,8 +3372,11 @@ class EnviroLink_AI_Aggregator {
                 $this->log_message('→ Normalized URL: ' . $normalized_link);
 
                 // First try exact match (backward compatibility)
+                // CRITICAL: Must include ALL post statuses (publish, future, draft, pending)
+                // to catch scheduled posts that would otherwise be missed
                 $existing = get_posts(array(
                     'post_type' => 'post',
+                    'post_status' => 'any', // Check ALL statuses: publish, future, draft, pending
                     'meta_key' => 'envirolink_source_url',
                     'meta_value' => $original_link,
                     'posts_per_page' => 1
@@ -3388,6 +3391,7 @@ class EnviroLink_AI_Aggregator {
                     // Posts may have old publication dates but were recently added to WordPress
                     $all_posts = get_posts(array(
                         'post_type' => 'post',
+                        'post_status' => 'any', // Check ALL statuses: publish, future, draft, pending
                         'meta_key' => 'envirolink_source_url',
                         'meta_compare' => 'EXISTS',
                         'posts_per_page' => 500, // Check last 500 posts added to WordPress
@@ -3676,6 +3680,7 @@ class EnviroLink_AI_Aggregator {
                     $this->log_message('→ Final safety check before post creation...');
                     $final_check = get_posts(array(
                         'post_type' => 'post',
+                        'post_status' => 'any', // Check ALL statuses: publish, future, draft, pending
                         'meta_query' => array(
                             array(
                                 'key' => 'envirolink_source_url',
