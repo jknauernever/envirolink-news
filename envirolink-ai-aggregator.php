@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.43.2
+ * Version: 1.43.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.43.2');
+define('ENVIROLINK_VERSION', '1.43.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3823,8 +3823,16 @@ class EnviroLink_AI_Aggregator {
                         }
 
                         // Set featured image if found
+                        $image_set_successfully = false;
                         if ($image_url) {
-                            $this->set_featured_image_from_url($image_url, $post_id);
+                            $attachment_id = $this->set_featured_image_from_url($image_url, $post_id);
+                            if ($attachment_id) {
+                                $image_set_successfully = true;
+                                $this->log_message('    ✓ Featured image set successfully (ID: ' . $attachment_id . ')');
+                            } else {
+                                $this->log_message('    ⚠ WARNING: Failed to set featured image - post will publish without image');
+                                $this->log_message('    ⚠ Facebook/social shares may appear without image');
+                            }
                         }
 
                         // Set AIOSEO schema markup for better search appearance
@@ -3836,6 +3844,12 @@ class EnviroLink_AI_Aggregator {
                         // Transition to desired post status (triggers Jetpack Social hooks)
                         // Only transition if status should be 'publish', otherwise leave as draft
                         if ($post_status === 'publish') {
+                            // CRITICAL FIX: Ensure Open Graph metadata is fresh before Jetpack shares
+                            // Clear WordPress object cache to force regeneration of post metadata
+                            wp_cache_delete($post_id, 'post_meta');
+                            wp_cache_delete($post_id, 'posts');
+                            clean_post_cache($post_id);
+
                             // CRITICAL: Always use current time when publishing to prevent "Scheduled" status
                             // WordPress auto-marks posts as 'future' if post_date is ahead of server time
                             // This can happen due to timezone differences in RSS feeds
@@ -3846,7 +3860,12 @@ class EnviroLink_AI_Aggregator {
                                 'post_date' => $current_time,
                                 'post_date_gmt' => get_gmt_from_date($current_time)
                             ));
-                            $this->log_message('→ Published post (triggers Jetpack Social sharing)');
+
+                            if ($image_set_successfully) {
+                                $this->log_message('→ Published post with featured image (triggers Jetpack Social sharing)');
+                            } else {
+                                $this->log_message('→ Published post WITHOUT featured image (triggers Jetpack Social sharing)');
+                            }
                         } else {
                             $this->log_message('→ Post saved as draft (per settings)');
                         }

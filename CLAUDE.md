@@ -229,6 +229,26 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.43.3** (2025-11-13) - CRITICAL FIX: Check image upload success before Jetpack Social sharing
+- **Root Cause:** Some Facebook posts appear without images even though WordPress has featured image
+- **The Problem:** Code called `set_featured_image_from_url()` but never checked if it succeeded
+  - Image downloads can fail due to: network timeouts, invalid URLs, rate limiting, SSL errors
+  - When image failed, code continued anyway and published without checking
+  - Jetpack Social fired immediately on publish, shared to Facebook without image
+  - No visibility into which posts failed - silent failures
+- **The Fix:**
+  - Check return value of `set_featured_image_from_url()` (lines 3828-3836)
+  - Log warnings when image setting fails: "WARNING: Failed to set featured image"
+  - Clear WordPress cache before publishing to ensure Open Graph metadata is fresh (lines 3847-3851)
+  - Explicit logging: "Published post with featured image" vs "WITHOUT featured image"
+  - Code: Lines 3825-3871
+- **Impact:**
+  - Administrators can now see in logs which posts failed to get images
+  - Cache clearing ensures Facebook always gets fresh metadata
+  - Better diagnostics for Jetpack Social sharing issues
+- **What to do:** Check admin logs after running aggregator - warnings will show image failures
+- **Next step:** Consider adding retry logic or fallback images for failed downloads
+
 **v1.43.2** (2025-11-13) - CRITICAL FIX: Force current time on publish to prevent "Scheduled" status
 - **Root Cause:** v1.43.1 attempted to fix scheduled posts but timezone comparison was insufficient
 - **The Problem:** WordPress automatically marks posts as 'future' status if post_date > server time
