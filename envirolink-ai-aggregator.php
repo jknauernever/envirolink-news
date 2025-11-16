@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.43.3
+ * Version: 1.44.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.43.3');
+define('ENVIROLINK_VERSION', '1.44.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -78,6 +78,8 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
+        add_action('wp_ajax_envirolink_find_unshared_posts', array($this, 'ajax_find_unshared_posts'));
+        add_action('wp_ajax_envirolink_reshare_posts', array($this, 'ajax_reshare_posts'));
 
         // Public AJAX endpoint for system cron (no authentication required, uses secret key)
         add_action('wp_ajax_nopriv_envirolink_cron_roundup', array($this, 'ajax_cron_roundup'));
@@ -610,6 +612,7 @@ class EnviroLink_AI_Aggregator {
                 <a href="#settings" class="nav-tab nav-tab-active">Settings</a>
                 <a href="#feeds" class="nav-tab">RSS Feeds</a>
                 <a href="#articles" class="nav-tab">Articles</a>
+                <a href="#social" class="nav-tab">Social Sharing</a>
             </h2>
 
             <div id="settings-tab" class="tab-content">
@@ -1185,6 +1188,68 @@ class EnviroLink_AI_Aggregator {
                     </table>
                 <?php endif; ?>
             </div>
+
+            <!-- Social Sharing Tab -->
+            <div id="social-tab" class="tab-content" style="display:none;">
+                <h2>Bulk Reshare to Facebook</h2>
+                <p class="description">
+                    Use this tool to reshare posts to Facebook that were missed (e.g., when Jetpack Social was deactivated).
+                    This will trigger Jetpack Social sharing for selected posts.
+                </p>
+
+                <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin: 20px 0;">
+                    <h3>Find Posts to Reshare</h3>
+
+                    <form id="find-unshared-form" style="margin-bottom: 20px;">
+                        <label for="days-back">
+                            Find posts from the last:
+                            <select id="days-back" name="days_back">
+                                <option value="1">1 day</option>
+                                <option value="2">2 days</option>
+                                <option value="3" selected>3 days</option>
+                                <option value="5">5 days</option>
+                                <option value="7">7 days</option>
+                                <option value="14">14 days</option>
+                                <option value="30">30 days</option>
+                            </select>
+                        </label>
+                        <button type="submit" class="button button-primary" id="find-posts-btn">
+                            Find Posts
+                        </button>
+                    </form>
+
+                    <div id="unshared-posts-results" style="display:none;">
+                        <!-- Results will be inserted here by JavaScript -->
+                    </div>
+
+                    <div id="reshare-progress" style="display:none; margin-top: 20px; padding: 15px; background: #f0f0f1; border-left: 4px solid #2271b1;">
+                        <h4 style="margin-top: 0;">Resharing in Progress...</h4>
+                        <div style="background: #fff; height: 30px; border: 1px solid #ccd0d4; margin: 10px 0; position: relative; overflow: hidden;">
+                            <div id="reshare-progress-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                            <div id="reshare-progress-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #000;"></div>
+                        </div>
+                        <div id="reshare-log" style="max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; background: #fff; padding: 10px; border: 1px solid #ccd0d4;">
+                            <!-- Log messages will appear here -->
+                        </div>
+                    </div>
+
+                    <div id="reshare-complete" style="display:none; margin-top: 20px; padding: 15px; background: #d5f4e6; border-left: 4px solid #00a32a;">
+                        <h4 style="margin-top: 0; color: #00a32a;">✓ Resharing Complete!</h4>
+                        <p id="reshare-summary"></p>
+                    </div>
+                </div>
+
+                <div style="background: #fffbcc; border-left: 4px solid #ffb900; padding: 15px; margin: 20px 0;">
+                    <h4 style="margin-top: 0;">⚠️ Important Notes</h4>
+                    <ul style="margin: 0;">
+                        <li><strong>Jetpack Social must be active and connected</strong> for this to work</li>
+                        <li>This will share posts to <strong>all connected social networks</strong> (Facebook, Twitter, etc.)</li>
+                        <li>Facebook may show these as "new" posts in your feed with the current timestamp</li>
+                        <li>Only works for posts created by EnviroLink News plugin (not manual posts)</li>
+                        <li>Check Jetpack → Social → Sharing History to verify sharing succeeded</li>
+                    </ul>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -1751,6 +1816,166 @@ class EnviroLink_AI_Aggregator {
                     });
                 }
             });
+
+            // ========================================
+            // Social Sharing Tab - Bulk Reshare
+            // ========================================
+
+            // Find unshared posts
+            $('#find-unshared-form').on('submit', function(e) {
+                e.preventDefault();
+
+                var daysBack = $('#days-back').val();
+                $('#find-posts-btn').prop('disabled', true).text('Searching...');
+                $('#unshared-posts-results').hide();
+                $('#reshare-progress').hide();
+                $('#reshare-complete').hide();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'envirolink_find_unshared_posts',
+                        days_back: daysBack
+                    },
+                    success: function(response) {
+                        $('#find-posts-btn').prop('disabled', false).text('Find Posts');
+
+                        if (response.success && response.data.posts.length > 0) {
+                            var html = '<h3>Found ' + response.data.count + ' post(s) from the last ' + daysBack + ' day(s)</h3>';
+                            html += '<p class="description">Select the posts you want to reshare to Facebook:</p>';
+                            html += '<div style="margin: 15px 0;">';
+                            html += '<button type="button" class="button" id="select-all-posts">Select All</button> ';
+                            html += '<button type="button" class="button" id="deselect-all-posts">Deselect All</button>';
+                            html += '</div>';
+                            html += '<table class="wp-list-table widefat fixed striped">';
+                            html += '<thead><tr>';
+                            html += '<th style="width: 40px;"><input type="checkbox" id="toggle-all-posts" /></th>';
+                            html += '<th style="width: 40px;">Image</th>';
+                            html += '<th style="width: 150px;">Date</th>';
+                            html += '<th>Title</th>';
+                            html += '<th style="width: 150px;">Source</th>';
+                            html += '</tr></thead><tbody>';
+
+                            $.each(response.data.posts, function(i, post) {
+                                html += '<tr>';
+                                html += '<td><input type="checkbox" class="post-checkbox" value="' + post.id + '" checked /></td>';
+                                html += '<td style="text-align: center;">';
+                                if (post.has_image) {
+                                    html += '<span style="font-size: 20px;" title="Has featured image">🖼️</span>';
+                                } else {
+                                    html += '<span style="color: #ccc;" title="No image">—</span>';
+                                }
+                                html += '</td>';
+                                html += '<td>' + post.date + '</td>';
+                                html += '<td><a href="' + post.url + '" target="_blank">' + post.title + '</a></td>';
+                                html += '<td>' + post.source + '</td>';
+                                html += '</tr>';
+                            });
+
+                            html += '</tbody></table>';
+                            html += '<div style="margin-top: 20px;">';
+                            html += '<button type="button" class="button button-primary button-large" id="reshare-selected-btn">Reshare Selected Posts to Facebook</button>';
+                            html += '</div>';
+
+                            $('#unshared-posts-results').html(html).slideDown();
+                        } else {
+                            $('#unshared-posts-results').html('<p style="color: #666;">No posts found in the last ' + daysBack + ' day(s).</p>').slideDown();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $('#find-posts-btn').prop('disabled', false).text('Find Posts');
+                        alert('Error finding posts: ' + error);
+                    }
+                });
+            });
+
+            // Toggle all checkboxes
+            $(document).on('change', '#toggle-all-posts', function() {
+                $('.post-checkbox').prop('checked', $(this).prop('checked'));
+            });
+
+            // Select/Deselect all buttons
+            $(document).on('click', '#select-all-posts', function() {
+                $('.post-checkbox').prop('checked', true);
+                $('#toggle-all-posts').prop('checked', true);
+            });
+
+            $(document).on('click', '#deselect-all-posts', function() {
+                $('.post-checkbox').prop('checked', false);
+                $('#toggle-all-posts').prop('checked', false);
+            });
+
+            // Reshare selected posts
+            $(document).on('click', '#reshare-selected-btn', function() {
+                var selectedPosts = [];
+                $('.post-checkbox:checked').each(function() {
+                    selectedPosts.push($(this).val());
+                });
+
+                if (selectedPosts.length === 0) {
+                    alert('Please select at least one post to reshare.');
+                    return;
+                }
+
+                if (!confirm('Reshare ' + selectedPosts.length + ' post(s) to Facebook and other connected social networks?')) {
+                    return;
+                }
+
+                // Hide results, show progress
+                $('#unshared-posts-results').slideUp();
+                $('#reshare-progress').slideDown();
+                $('#reshare-log').html('');
+
+                // Process posts one by one to show progress
+                var totalPosts = selectedPosts.length;
+                var currentIndex = 0;
+
+                function reshareNext() {
+                    if (currentIndex >= totalPosts) {
+                        // All done
+                        $('#reshare-progress').slideUp();
+                        $('#reshare-complete').slideDown();
+                        $('#reshare-summary').html('Successfully triggered Jetpack Social sharing for <strong>' + totalPosts + ' post(s)</strong>.<br><br>Check <a href="admin.php?page=jetpack#/sharing">Jetpack → Social → Sharing History</a> to verify the posts were shared to Facebook.');
+                        return;
+                    }
+
+                    var postId = selectedPosts[currentIndex];
+                    var progress = Math.round(((currentIndex + 1) / totalPosts) * 100);
+
+                    $('#reshare-progress-bar').css('width', progress + '%');
+                    $('#reshare-progress-text').text(progress + '% (' + (currentIndex + 1) + '/' + totalPosts + ')');
+
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'envirolink_reshare_posts',
+                            post_ids: [postId]
+                        },
+                        success: function(response) {
+                            if (response.success && response.data.log) {
+                                $.each(response.data.log, function(i, message) {
+                                    $('#reshare-log').append('<div>' + message + '</div>');
+                                });
+                                // Auto-scroll to bottom
+                                $('#reshare-log').scrollTop($('#reshare-log')[0].scrollHeight);
+                            }
+
+                            currentIndex++;
+                            reshareNext();
+                        },
+                        error: function(xhr, status, error) {
+                            $('#reshare-log').append('<div style="color: red;">Error resharing post ID ' + postId + ': ' + error + '</div>');
+                            $('#reshare-log').scrollTop($('#reshare-log')[0].scrollHeight);
+                            currentIndex++;
+                            reshareNext();
+                        }
+                    });
+                }
+
+                reshareNext();
+            });
         });
         </script>
         
@@ -1986,6 +2211,120 @@ class EnviroLink_AI_Aggregator {
         } catch (Error $e) {
             wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
         }
+    }
+
+    /**
+     * AJAX: Find unshared posts from last X days
+     */
+    public function ajax_find_unshared_posts() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $days_back = isset($_POST['days_back']) ? absint($_POST['days_back']) : 3;
+
+        // Get posts from last X days that were created by EnviroLink plugin
+        $args = array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 100,
+            'date_query' => array(
+                array(
+                    'after' => $days_back . ' days ago',
+                ),
+            ),
+            'meta_query' => array(
+                'relation' => 'OR',
+                array(
+                    'key' => 'envirolink_source_url',
+                    'compare' => 'EXISTS'
+                ),
+                array(
+                    'key' => 'envirolink_is_roundup',
+                    'value' => 'yes',
+                    'compare' => '='
+                )
+            ),
+            'orderby' => 'date',
+            'order' => 'DESC'
+        );
+
+        $posts = get_posts($args);
+        $results = array();
+
+        foreach ($posts as $post) {
+            $source_name = get_post_meta($post->ID, 'envirolink_source_name', true);
+            $is_roundup = get_post_meta($post->ID, 'envirolink_is_roundup', true);
+            $has_image = has_post_thumbnail($post->ID);
+
+            $results[] = array(
+                'id' => $post->ID,
+                'title' => $post->post_title,
+                'date' => get_the_date('M j, Y g:i A', $post),
+                'source' => $is_roundup ? 'Daily Roundup' : ($source_name ?: 'Unknown'),
+                'has_image' => $has_image,
+                'url' => get_permalink($post->ID)
+            );
+        }
+
+        wp_send_json_success(array(
+            'posts' => $results,
+            'count' => count($results)
+        ));
+    }
+
+    /**
+     * AJAX: Reshare posts to Jetpack Social
+     */
+    public function ajax_reshare_posts() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        $post_ids = isset($_POST['post_ids']) ? array_map('absint', $_POST['post_ids']) : array();
+
+        if (empty($post_ids)) {
+            wp_send_json_error(array('message' => 'No posts selected'));
+            return;
+        }
+
+        $success_count = 0;
+        $failed_count = 0;
+        $log = array();
+
+        // Add temporary filter to force Jetpack to reshare already-published posts
+        add_filter('publicize_should_publicize_published_post', '__return_true', 999);
+
+        foreach ($post_ids as $post_id) {
+            $post = get_post($post_id);
+            if (!$post || $post->post_status !== 'publish') {
+                $log[] = "Post ID {$post_id}: FAILED - Post not found or not published";
+                $failed_count++;
+                continue;
+            }
+
+            // Trigger Jetpack Social sharing by simulating post status transition
+            // This is the same hook Jetpack listens to for auto-sharing
+            do_action('transition_post_status', 'publish', 'publish', $post);
+
+            $log[] = "Post ID {$post_id}: Triggered Jetpack Social sharing for '{$post->post_title}'";
+            $success_count++;
+
+            // Small delay to avoid rate limiting
+            usleep(100000); // 0.1 second
+        }
+
+        // Remove temporary filter
+        remove_filter('publicize_should_publicize_published_post', '__return_true', 999);
+
+        wp_send_json_success(array(
+            'message' => "Reshared {$success_count} posts" . ($failed_count ? ", {$failed_count} failed" : ""),
+            'success_count' => $success_count,
+            'failed_count' => $failed_count,
+            'log' => $log
+        ));
     }
 
     /**
