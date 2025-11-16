@@ -229,39 +229,6 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
-**v1.44.0** (2025-11-13) - NEW FEATURE: Bulk Reshare to Facebook
-- **Purpose:** Reshare posts to Facebook that were missed when Jetpack Social was deactivated
-- **New Admin Tab:** "Social Sharing" with bulk reshare tool
-- **Features:**
-  - Find posts from last 1-30 days (configurable)
-  - Shows table with all EnviroLink posts (articles + roundups)
-  - Select/deselect individual posts or use "Select All"
-  - Shows which posts have featured images
-  - Real-time progress tracking with visual progress bar
-  - Detailed log of each post being reshared
-  - Links to Jetpack sharing history for verification
-- **How It Works:**
-  - Uses temporary filter to override Jetpack's "already published" check
-  - Triggers `transition_post_status` action that Jetpack listens to
-  - Processes posts one at a time with 0.1s delay (rate limiting)
-  - Works with all connected Jetpack Social networks (Facebook, Twitter, etc.)
-- **Code Changes:**
-  - Lines 81-82: Added two AJAX action hooks
-  - Lines 613: Added "Social Sharing" tab to admin navigation
-  - Lines 1190-1250: New admin tab UI with form and progress tracking
-  - Lines 1820-1978: JavaScript for AJAX calls and UI updates
-  - Lines 2056-2168: Two new AJAX handler methods
-- **User Benefits:**
-  - No need to manually reshare posts one by one
-  - Can recover from Jetpack deactivation incidents
-  - Clear visibility into what's being shared
-  - Safe confirmation before triggering reshares
-- **Limitations:**
-  - Requires Jetpack Social to be active and connected
-  - Facebook will show posts with current timestamp (not original date)
-  - Only works for EnviroLink posts (not manual posts)
-  - User must verify sharing succeeded in Jetpack history
-
 **v1.43.3** (2025-11-13) - CRITICAL FIX: Check image upload success before Jetpack Social sharing
 - **Root Cause:** Some Facebook posts appear without images even though WordPress has featured image
 - **The Problem:** Code called `set_featured_image_from_url()` but never checked if it succeeded
