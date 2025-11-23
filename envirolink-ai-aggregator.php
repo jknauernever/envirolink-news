@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.43.3
+ * Version: 1.45.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.43.3');
+define('ENVIROLINK_VERSION', '1.45.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -305,6 +305,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
             update_option('envirolink_randomize_daily_order', isset($_POST['randomize_daily_order']) ? 'yes' : 'no');
             update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
+            update_option('envirolink_keyword_daily_limit', absint($_POST['keyword_daily_limit']));
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
             update_option('envirolink_unsplash_api_key', sanitize_text_field($_POST['unsplash_api_key']));
@@ -717,6 +718,23 @@ class EnviroLink_AI_Aggregator {
                                     Automatically clean up duplicates after feed import
                                 </label>
                                 <p class="description">When enabled, runs the duplicate cleanup process automatically after each feed import. This catches any duplicates that slip through the initial detection (URL normalization, title similarity, same images). Uses the same proven logic as the "Clean Duplicates" button. <strong>Recommended: Leave enabled.</strong></p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Keyword Daily Limit
+                            </th>
+                            <td>
+                                <input type="number"
+                                       name="keyword_daily_limit"
+                                       id="keyword_daily_limit"
+                                       value="<?php echo esc_attr(get_option('envirolink_keyword_daily_limit', 2)); ?>"
+                                       min="1"
+                                       max="10"
+                                       style="width: 80px;" />
+                                <label for="keyword_daily_limit"> articles per topic per day</label>
+                                <p class="description">Prevents redundant coverage of the same event. Before publishing an article, the plugin extracts keywords from the RSS title and checks if similar articles were already published in the last 24 hours. If the daily limit is reached, the article is skipped. This prevents multiple outlets covering the same story (e.g., 6 different "COP30 ends" articles). <strong>Recommended: 2-3 articles per topic.</strong> Set higher (5-10) if you want comprehensive multi-source coverage of major events.</p>
                             </td>
                         </tr>
 
@@ -2757,6 +2775,127 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * Extract significant keywords from title for daily limiting
+     * Returns array of 2-3 most important keywords
+     */
+    private function extract_keywords_from_title($title) {
+        // Common stop words to ignore
+        $stop_words = array(
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'as', 'by', 'with', 'from', 'is', 'are', 'was', 'were', 'be',
+            'been', 'has', 'have', 'had', 'will', 'would', 'could', 'should',
+            'may', 'might', 'can', 'about', 'after', 'over', 'their', 'its',
+            'this', 'that', 'these', 'those', 'it', 'new', 'amid', 'says', 'amid'
+        );
+
+        // Convert to lowercase and split into words
+        $title_lower = strtolower(trim($title));
+
+        // Remove special characters but keep alphanumeric and spaces
+        $title_clean = preg_replace('/[^a-z0-9\s]/', ' ', $title_lower);
+
+        // Split into words
+        $words = preg_split('/\s+/', $title_clean);
+
+        // Filter out stop words and short words
+        $keywords = array();
+        foreach ($words as $word) {
+            $word = trim($word);
+            // Keep words that are:
+            // - Not stop words
+            // - At least 3 characters long
+            // - Not purely numeric
+            if (!in_array($word, $stop_words) &&
+                strlen($word) >= 3 &&
+                !is_numeric($word)) {
+                $keywords[] = $word;
+            }
+        }
+
+        // Remove duplicates and take first 3 most significant
+        $keywords = array_unique($keywords);
+        $keywords = array_slice($keywords, 0, 3);
+
+        return $keywords;
+    }
+
+    /**
+     * Check if we've already published enough articles with these keywords today
+     * Returns true if limit reached, false if we can still publish
+     */
+    private function check_keyword_daily_limit($keywords, $current_article_title) {
+        if (empty($keywords)) {
+            return false; // No keywords to check, allow the article
+        }
+
+        // Get the daily limit from settings (default: 2)
+        $daily_limit = get_option('envirolink_keyword_daily_limit', 2);
+
+        // Check posts from last 24 hours
+        $yesterday = date('Y-m-d H:i:s', strtotime('-24 hours'));
+
+        $recent_posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any', // Check all statuses
+            'date_query' => array(
+                array(
+                    'after' => $yesterday,
+                    'inclusive' => true,
+                ),
+            ),
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'posts_per_page' => 100,
+            'fields' => 'ids', // Only get IDs for efficiency
+        ));
+
+        if (empty($recent_posts)) {
+            return false; // No recent posts, allow this one
+        }
+
+        // Count posts containing these keywords
+        $matches = 0;
+        $matched_titles = array();
+
+        foreach ($recent_posts as $post_id) {
+            $post_title = get_the_title($post_id);
+            $post_title_lower = strtolower($post_title);
+
+            // Check if post title contains any of our keywords
+            $keyword_matches = 0;
+            foreach ($keywords as $keyword) {
+                if (strpos($post_title_lower, $keyword) !== false) {
+                    $keyword_matches++;
+                }
+            }
+
+            // If at least 2 keywords match, consider it the same topic
+            if ($keyword_matches >= 2 || (count($keywords) <= 2 && $keyword_matches >= 1)) {
+                $matches++;
+                $matched_titles[] = $post_title;
+
+                // Stop counting if we've already hit the limit
+                if ($matches >= $daily_limit) {
+                    break;
+                }
+            }
+        }
+
+        // Log the results
+        if ($matches >= $daily_limit) {
+            $this->log_message('→ KEYWORD LIMIT REACHED: Already published ' . $matches . ' articles about [' . implode(', ', $keywords) . '] in last 24 hours');
+            $this->log_message('   Recent similar articles:');
+            foreach (array_slice($matched_titles, 0, 3) as $title) {
+                $this->log_message('   • "' . $title . '"');
+            }
+            $this->log_message('   Skipping: "' . $current_article_title . '" to avoid redundancy');
+            return true; // Limit reached, skip this article
+        }
+
+        return false; // Under the limit, allow this article
+    }
+
+    /**
      * Update progress status
      */
     private function update_progress($data) {
@@ -3552,6 +3691,18 @@ class EnviroLink_AI_Aggregator {
                     }
                 } else {
                     $this->log_message('→ NEW POST: Processing new article');
+
+                    // Check keyword-based daily limiting (prevent redundant coverage of same events)
+                    $keywords = $this->extract_keywords_from_title($original_title);
+                    if (!empty($keywords)) {
+                        $this->log_message('→ Extracted keywords: [' . implode(', ', $keywords) . ']');
+
+                        if ($this->check_keyword_daily_limit($keywords, $original_title)) {
+                            // Limit reached, skip this article
+                            $total_skipped++;
+                            continue;
+                        }
+                    }
                 }
 
                 // Get original content

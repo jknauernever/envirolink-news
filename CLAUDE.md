@@ -229,6 +229,40 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.45.0** (2025-11-23) - NEW FEATURE: Keyword-based daily limiting to prevent redundant coverage
+- **Problem:** Multiple outlets covering the same event resulted in redundant articles (e.g., 6 different "COP30 ends" articles)
+- **Solution:** Intelligent keyword extraction and daily limiting before AI rewriting
+- **How it works:**
+  - Extracts 2-3 significant keywords from RSS article title
+  - Checks posts from last 24 hours for similar keyword combinations
+  - Skips article if daily limit already reached (prevents wasted API calls)
+  - Configurable limit in Settings (default: 2 articles per topic per day)
+- **New Methods:**
+  - `extract_keywords_from_title()`: Removes stop words, extracts meaningful keywords (lines 2759-2802)
+  - `check_keyword_daily_limit()`: Counts recent posts with same keywords (lines 2804-2878)
+- **Settings UI:** New "Keyword Daily Limit" field in Settings tab (lines 724-739)
+  - Range: 1-10 articles per topic per day
+  - Recommended: 2-3 for diverse coverage
+  - Set higher (5-10) for comprehensive multi-source coverage of major events
+- **Integration:** Check runs after duplicate detection but before AI rewriting (lines 3695-3705)
+  - Saves API costs by skipping redundant articles early
+  - Detailed logging shows extracted keywords and matching articles
+- **Impact:**
+  - Prevents semantic duplicates (same event, different sources)
+  - Reduces API costs (no AI rewriting for redundant articles)
+  - More diverse homepage (variety of topics instead of clustering)
+  - Better user experience (readers see different stories, not same event 6 times)
+- **Example log output:**
+  ```
+  → Extracted keywords: [cop30, climate, summit]
+  → KEYWORD LIMIT REACHED: Already published 2 articles about [cop30, climate, summit] in last 24 hours
+     Recent similar articles:
+     • "Cop30 climate summit extends beyond deadline as nations clash"
+     • "Cop30 climate summit concludes without new fossil fuel commitments"
+     Skipping: "Cop30 climate summit ends without bold new commitments" to avoid redundancy
+  ```
+- **Configuration:** Lines 308 (save setting), 729-738 (UI), 2814 (get setting with default)
+
 **v1.43.3** (2025-11-13) - CRITICAL FIX: Check image upload success before Jetpack Social sharing
 - **Root Cause:** Some Facebook posts appear without images even though WordPress has featured image
 - **The Problem:** Code called `set_featured_image_from_url()` but never checked if it succeeded
