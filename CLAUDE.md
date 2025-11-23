@@ -229,12 +229,27 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.45.1** (2025-11-23) - FIX: Change keyword limiting to calendar-day matching
+- **Change:** Keyword limiting now uses same calendar date instead of rolling 24-hour window
+- **Before:** Checked posts from exactly 24 hours ago (e.g., Nov 23 2pm → Nov 22 2pm)
+- **After:** Checks posts from today's calendar date (e.g., Nov 23 12am → now)
+- **Impact:** Counter resets at midnight for more predictable editorial behavior
+- **Benefits:**
+  - More intuitive: "2 articles per day" means "2 per calendar day"
+  - Can't game system by waiting for rolling window to expire
+  - Better aligns with editorial calendar planning
+  - Simpler mental model for administrators
+- **Code changes:**
+  - Line 2835: `date('Y-m-d 00:00:00')` instead of `strtotime('-24 hours')`
+  - Line 2886: Log message says "today" instead of "last 24 hours"
+  - Line 737: Settings description clarifies "same calendar date" and "resets at midnight"
+
 **v1.45.0** (2025-11-23) - NEW FEATURE: Keyword-based daily limiting to prevent redundant coverage
 - **Problem:** Multiple outlets covering the same event resulted in redundant articles (e.g., 6 different "COP30 ends" articles)
 - **Solution:** Intelligent keyword extraction and daily limiting before AI rewriting
 - **How it works:**
   - Extracts 2-3 significant keywords from RSS article title
-  - Checks posts from last 24 hours for similar keyword combinations
+  - Checks posts from today (same calendar date) for similar keyword combinations
   - Skips article if daily limit already reached (prevents wasted API calls)
   - Configurable limit in Settings (default: 2 articles per topic per day)
 - **New Methods:**

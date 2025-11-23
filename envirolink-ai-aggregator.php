@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.45.0
+ * Version: 1.45.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.45.0');
+define('ENVIROLINK_VERSION', '1.45.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -734,7 +734,7 @@ class EnviroLink_AI_Aggregator {
                                        max="10"
                                        style="width: 80px;" />
                                 <label for="keyword_daily_limit"> articles per topic per day</label>
-                                <p class="description">Prevents redundant coverage of the same event. Before publishing an article, the plugin extracts keywords from the RSS title and checks if similar articles were already published in the last 24 hours. If the daily limit is reached, the article is skipped. This prevents multiple outlets covering the same story (e.g., 6 different "COP30 ends" articles). <strong>Recommended: 2-3 articles per topic.</strong> Set higher (5-10) if you want comprehensive multi-source coverage of major events.</p>
+                                <p class="description">Prevents redundant coverage of the same event. Before publishing an article, the plugin extracts keywords from the RSS title and checks if similar articles were already published today (same calendar date). If the daily limit is reached, the article is skipped. The counter resets at midnight. This prevents multiple outlets covering the same story (e.g., 6 different "COP30 ends" articles). <strong>Recommended: 2-3 articles per topic.</strong> Set higher (5-10) if you want comprehensive multi-source coverage of major events.</p>
                             </td>
                         </tr>
 
@@ -2831,15 +2831,15 @@ class EnviroLink_AI_Aggregator {
         // Get the daily limit from settings (default: 2)
         $daily_limit = get_option('envirolink_keyword_daily_limit', 2);
 
-        // Check posts from last 24 hours
-        $yesterday = date('Y-m-d H:i:s', strtotime('-24 hours'));
+        // Check posts from today (same calendar date)
+        $today_start = date('Y-m-d 00:00:00');
 
         $recent_posts = get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any', // Check all statuses
             'date_query' => array(
                 array(
-                    'after' => $yesterday,
+                    'after' => $today_start,
                     'inclusive' => true,
                 ),
             ),
@@ -2883,7 +2883,7 @@ class EnviroLink_AI_Aggregator {
 
         // Log the results
         if ($matches >= $daily_limit) {
-            $this->log_message('→ KEYWORD LIMIT REACHED: Already published ' . $matches . ' articles about [' . implode(', ', $keywords) . '] in last 24 hours');
+            $this->log_message('→ KEYWORD LIMIT REACHED: Already published ' . $matches . ' articles about [' . implode(', ', $keywords) . '] today');
             $this->log_message('   Recent similar articles:');
             foreach (array_slice($matched_titles, 0, 3) as $title) {
                 $this->log_message('   • "' . $title . '"');
