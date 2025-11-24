@@ -4,12 +4,14 @@ Automated WordPress plugin that fetches environmental news from RSS feeds, rewri
 
 ## Features
 
-✅ **RSS Feed Management** - Add, remove, enable/disable news sources through admin interface  
-✅ **AI-Powered Rewriting** - Uses Claude to create unique, engaging summaries  
-✅ **Automatic Publishing** - Creates WordPress posts automatically  
-✅ **Hourly Updates** - Runs automatically via WordPress cron  
-✅ **Duplicate Detection** - Prevents re-importing the same articles  
-✅ **Manual Trigger** - Run the aggregator on-demand from admin panel  
+✅ **RSS Feed Management** - Add, remove, enable/disable news sources through admin interface
+✅ **AI-Powered Rewriting** - Uses Claude to create unique, engaging summaries
+✅ **Professional Ontology Tagging** - IPTC Media Topics + UN SDG-based taxonomy
+✅ **Automatic Publishing** - Creates WordPress posts automatically
+✅ **Hourly Updates** - Runs automatically via WordPress cron
+✅ **Duplicate Detection** - Prevents re-importing the same articles
+✅ **Daily Roundups** - AI-generated editorial summaries with Pexels imagery
+✅ **Manual Trigger** - Run the aggregator on-demand from admin panel
 ✅ **Source Attribution** - Stores original source URL and title as post metadata  
 
 ## Requirements
@@ -102,6 +104,83 @@ Claude AI is prompted to:
 - Maintain all factual accuracy
 - Use clear, engaging language for general audiences
 - Preserve journalistic integrity
+
+## Environmental News Ontology
+
+### What Is It?
+
+The plugin includes a professional taxonomy system based on:
+- **IPTC Media Topics** - International news industry standards
+- **UN Sustainable Development Goals** - 17 global goals for environmental impact
+
+This ensures your articles have clean, consistent, professional tags instead of junk tags like "Homepage", "Breaking News", or "World".
+
+### The 41-Topic Taxonomy
+
+**Level 0:** Environment
+
+**Level 1 (Main Categories):**
+- Climate Change
+- Conservation
+- Environmental Pollution
+- Natural Resources
+- Renewable Energy
+- Sustainability
+- Environmental Justice
+- Natural Disasters
+
+**Level 2 (Subcategories):**
+- Climate: Carbon Emissions, Climate Adaptation, Climate Mitigation, Sea Level Rise
+- Conservation: Endangered Species, Wildlife Protection, Biodiversity, Habitat Protection, Deforestation
+- Pollution: Air, Water, Soil, Noise, Light, Plastic
+- Resources: Water, Forest, Mineral, Ocean
+- Renewables: Solar, Wind, Hydroelectric, Geothermal, Biomass
+- Plus: Circular Economy, Green Technology, Environmental Policy, Ecosystem Services
+- Disasters: Drought, Flood, Wildfire, Hurricane
+
+### Setup (One-Time)
+
+1. Go to **EnviroLink News → Ontology** tab
+2. Click **"Seed Ontology Database"** button
+3. Wait for confirmation: "✓ Seeded (41 topics)"
+4. Go to **Settings** tab
+5. Check **"Enable ontology-based tag filtering"**
+6. Click **Save Settings**
+
+### Re-tag Existing Posts
+
+After enabling ontology:
+
+1. Go to **Ontology** tab
+2. Click **"Re-tag All Existing Posts"** button
+3. Wait for completion: "Updated X articles, Y roundups, skipped Z"
+
+This cleans up ALL past articles and roundups with filtered tags.
+
+### How It Works
+
+**For Articles:**
+- RSS feeds provide tags (e.g., "climate change, world news, homepage, breaking")
+- Ontology filters them (keeps: "Climate Change", removes: "world news, homepage, breaking")
+- Only ontology-matched tags are applied
+
+**For Roundups:**
+- Automatically inherits tags from the 30 articles included
+- Shows diverse topic coverage
+
+**Matching Logic:**
+1. **Exact match** - "Climate Change" → Climate Change ✓
+2. **Alias match** - "global warming" → Climate Change ✓ (via alias)
+3. **Fuzzy match** - "renewable" → Renewable Energy ✓ (partial match)
+
+### Benefits
+
+✅ No more junk tags ("World News", "Homepage", "Featured")
+✅ Consistent terminology across all feeds
+✅ UN SDG-aligned for impact reporting
+✅ Better SEO with focused keywords
+✅ Professional appearance
+✅ Tag archives actually work (no clutter)
 
 ## Managing Your News Aggregator
 
@@ -304,6 +383,48 @@ Potential features to add:
 - **License**: GPL v2 or later
 
 ## Version History
+
+**v1.47.0** - Ontology Tagging for Roundups (2025-11-23)
+- Daily roundups now inherit ontology tags from included articles
+- Re-tag tool processes both articles and roundups
+- Separate counts in results: "X articles, Y roundups"
+
+**v1.46.0** - Environmental News Ontology System (2025-11-23)
+- 41-topic professional taxonomy (IPTC Media Topics + UN SDGs)
+- Intelligent tag filtering (exact → alias → fuzzy matching)
+- New Ontology admin tab with full CRUD interface
+- Automatic integration with article tagging
+- 200+ aliases for smart matching
+- Bulk re-tagging tool for existing posts
+
+**v1.45.0** - Keyword Daily Limiting (2025-11-23)
+- Prevents redundant coverage of same events
+- Configurable limit per topic per day (default: 2 articles)
+- Calendar-day based counter (resets at midnight)
+- Smart keyword extraction from article titles
+
+**v1.43.0** - Per-Feed Pexels Integration (2025-11-13)
+- Per-feed option to use Pexels instead of RSS images
+- Intelligent keyword extraction for image search
+- Daily roundups switched to Pexels
+- Pexels API key configuration in Settings
+
+**v1.42.0** - Enterprise PID-Based Locking (2025-11-13)
+- Eliminates duplicate posts via process liveness check
+- Heartbeat mechanism for long-running imports
+- Atomic metadata storage
+- Extended timeout handling
+
+**v1.38.0** - Scheduled Feed Processing (2025-11-09)
+- 7am ET and 4pm ET processing windows
+- Manual triggers bypass time restrictions
+- Better resource management
+
+**v1.37.0** - AI Editorial Metadata Generation (2025-11-09)
+- Professional headlines and descriptions for roundups
+- Multi-story hooks for better engagement
+- SEO-optimized titles and meta descriptions
+- Date cadence included in titles
 
 **v1.0.0** - Initial Release
 - RSS feed management

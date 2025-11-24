@@ -50,8 +50,21 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
 
 4. **Admin Interface** - Tab-based UI:
    - System Status dashboard
-   - Settings tab (API key, category, post status)
+   - Settings tab (API key, category, post status, ontology toggle)
    - RSS Feeds tab (add/remove/toggle feeds)
+   - Articles tab (view/search all imported posts)
+   - Ontology tab (manage taxonomy database)
+
+5. **Environmental News Ontology** - Professional taxonomy system:
+   - Three custom database tables:
+     - `wp_envirolink_topics`: Core taxonomy (41 topics)
+     - `wp_envirolink_topic_sdg_mapping`: UN SDG relationships
+     - `wp_envirolink_topic_aliases`: Alternative matching terms (200+ aliases)
+   - Based on IPTC Media Topics + UN Sustainable Development Goals
+   - Hierarchical structure (Level 0 → Level 1 → Level 2)
+   - Filtering modes: exact match, alias match, fuzzy match
+   - Opt-in via Settings: `envirolink_ontology_enabled` option
+   - Integrates seamlessly with RSS tag extraction
 
 ### Data Flow
 
@@ -108,6 +121,17 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - Stores extracted RSS metadata (author, pubdate, tags, locations) if enabled
    - Downloads and sets featured image if found in feed
    - All metadata accessible via `get_post_meta()` for theme display
+
+8. **Ontology Tag Filtering** (`filter_tags_with_ontology` method):
+   - Only runs if `envirolink_ontology_enabled` option is 'yes'
+   - Takes RSS tags from `envirolink_topic_tags` metadata
+   - Three-tier matching strategy:
+     1. Exact match: Direct comparison with topic labels/slugs
+     2. Alias match: Searches 200+ alternative terms (e.g., "global warming" → "Climate Change")
+     3. Fuzzy match: Partial string matching with LIKE query
+   - Returns array of ontology-matched topic labels
+   - Applied to both new articles and daily roundups
+   - Logged in admin: `→ Applied 3 ontology-filtered tags: Climate Change, Conservation, Biodiversity`
 
 ## Project Structure
 
@@ -228,6 +252,57 @@ if ($locations) {
 Update the 'model' parameter in the API request body in `rewrite_with_ai` method (line ~2100).
 
 ## Recent Version History
+
+**v1.47.0** (2025-11-23) - NEW FEATURE: Ontology tagging for Daily Roundups
+- **Future Roundups:** Automatically inherit ontology tags from 30 included articles
+- **Past Roundups:** "Re-tag All Existing Posts" button now processes roundups
+- **How it works:**
+  - New roundup: Collects tags from included articles → applies to roundup
+  - Re-tag: Gets 30 recent articles before each roundup date → applies their tags
+- **Benefits:**
+  - Roundups appear in tag archives
+  - Better discoverability by topic
+  - Tag clouds show roundup coverage
+  - Consistent tagging across all content types
+- **UI Changes:**
+  - Re-tag button description mentions roundups
+  - Success message shows separate counts: "Updated X articles, Y roundups, skipped Z"
+- **Code:** Lines 5369-5392 (future roundups), 6786-6822 (historical re-tagging)
+
+**v1.46.0** (2025-11-23) - NEW FEATURE: Environmental News Ontology Management System
+- **Professional Taxonomy:** 41 curated topics based on IPTC Media Topics + UN SDGs
+- **Database Architecture:** 3 custom tables
+  - `wp_envirolink_topics`: Core taxonomy with hierarchical structure
+  - `wp_envirolink_topic_sdg_mapping`: Topic-to-SDG relationships
+  - `wp_envirolink_topic_aliases`: 200+ alternative matching terms
+- **Intelligent Filtering:** Three-tier matching (exact → alias → fuzzy)
+- **New Admin Tab:** Full CRUD interface for ontology management
+- **Seed Function:** `seed_ontology_database()` populates 41 topics with SDG mappings
+- **Integration:** Seamless integration with RSS tag extraction workflow
+- **Settings Toggle:** Opt-in via "Enable ontology-based tag filtering" checkbox
+- **Benefits:**
+  - Eliminates junk tags (World News, Homepage, Breaking, etc.)
+  - Consistent environmental terminology across all feeds
+  - UN SDG-aligned for impact reporting
+  - Professional appearance matching major news outlets
+- **Code Changes:**
+  - Lines 5914-6875: Complete ontology system implementation
+  - Lines 3984-3998, 3855-3869: Integration with article tagging
+  - Lines 756-770: Settings UI toggle
+  - Lines 1220-1359: Ontology admin tab
+  - Lines 1927-2039: JavaScript for admin actions
+
+**v1.46.2** (2025-11-23) - FIX: Comprehensive error handling for ontology seeding
+- Added table existence verification before seeding
+- Validates every database insert for success/failure
+- Returns detailed MySQL error messages
+- Shows count of successful inserts vs errors
+- Diagnoses: permission issues, column mismatches, SQL errors, missing tables
+
+**v1.46.1** (2025-11-23) - FIX: Automatic table creation for plugin updates
+- Tables now created automatically on admin page load if missing
+- Fixes "Table doesn't exist" error when updating (not fresh install)
+- No manual deactivation/reactivation needed
 
 **v1.45.1** (2025-11-23) - FIX: Change keyword limiting to calendar-day matching
 - **Change:** Keyword limiting now uses same calendar date instead of rolling 24-hour window
