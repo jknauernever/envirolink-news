@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.46.1
+ * Version: 1.46.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.46.1');
+define('ENVIROLINK_VERSION', '1.46.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -6321,8 +6321,17 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         $table_sdg = $wpdb->prefix . 'envirolink_topic_sdg_mapping';
         $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
 
+        // Verify tables exist first
+        $tables_exist = $wpdb->get_var("SHOW TABLES LIKE '$table_topics'");
+        if (!$tables_exist) {
+            return array('success' => false, 'message' => 'Ontology tables do not exist. Database creation may have failed.');
+        }
+
         // Check if already seeded
         $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_topics");
+        if ($wpdb->last_error) {
+            return array('success' => false, 'message' => 'Database error: ' . $wpdb->last_error);
+        }
         if ($count > 0) {
             return array('success' => false, 'message' => 'Database already seeded. Clear first if re-seeding.');
         }
@@ -6425,6 +6434,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         // Insert topics and build parent-child map
         $inserted_ids = array();
         $parent_map = array();
+        $insert_errors = array();
 
         foreach ($topics as $topic_data) {
             list($iptc_code, $label, $definition, $parent_iptc, $sdgs, $aliases) = $topic_data;
@@ -6432,7 +6442,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             $slug = sanitize_title($label);
             $level = ($parent_iptc === null) ? 0 : 1; // Will calculate actual level after all inserts
 
-            $wpdb->insert($table_topics, array(
+            $result = $wpdb->insert($table_topics, array(
                 'iptc_code' => $iptc_code,
                 'label' => $label,
                 'slug' => $slug,
@@ -6443,7 +6453,17 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
                 'status' => 'active'
             ));
 
+            if ($result === false || $wpdb->last_error) {
+                $insert_errors[] = "Failed to insert '$label': " . $wpdb->last_error;
+                continue;
+            }
+
             $topic_id = $wpdb->insert_id;
+            if (!$topic_id) {
+                $insert_errors[] = "Failed to get insert ID for '$label'";
+                continue;
+            }
+
             $inserted_ids[$iptc_code] = $topic_id;
 
             if ($parent_iptc !== null) {
@@ -6497,13 +6517,28 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             }
         }
 
+        // Check if any topics were actually inserted
+        if (empty($inserted_ids)) {
+            $error_msg = 'Failed to insert any topics.';
+            if (!empty($insert_errors)) {
+                $error_msg .= ' Errors: ' . implode('; ', array_slice($insert_errors, 0, 3));
+            }
+            return array('success' => false, 'message' => $error_msg);
+        }
+
         update_option('envirolink_ontology_seeded', true);
         update_option('envirolink_ontology_seed_date', current_time('mysql'));
 
+        $message = 'Ontology database seeded successfully with ' . count($inserted_ids) . ' topics';
+        if (!empty($insert_errors)) {
+            $message .= ' (' . count($insert_errors) . ' errors occurred)';
+        }
+
         return array(
             'success' => true,
-            'message' => 'Ontology database seeded successfully',
-            'topics_count' => count($topics)
+            'message' => $message,
+            'topics_count' => count($inserted_ids),
+            'errors' => $insert_errors
         );
     }
 
