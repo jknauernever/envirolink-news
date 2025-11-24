@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.46.2
+ * Version: 1.47.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.46.2');
+define('ENVIROLINK_VERSION', '1.47.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1313,7 +1313,7 @@ class EnviroLink_AI_Aggregator {
                             Re-tag All Existing Posts
                         </button>
                         <span class="description">
-                            Apply ontology filtering to all existing EnviroLink posts (may take a while).
+                            Apply ontology filtering to all existing articles and roundups. Articles get filtered RSS tags, roundups inherit tags from included articles (may take a while).
                         </span>
                     </p>
 
@@ -2044,9 +2044,13 @@ class EnviroLink_AI_Aggregator {
                     },
                     success: function(response) {
                         if (response.success) {
-                            $result.html('<div class="notice notice-success"><p><strong>Success!</strong> ' +
-                                'Updated ' + response.data.updated + ' posts, skipped ' + response.data.skipped +
-                                ' (Total: ' + response.data.total + ')</p></div>');
+                            var message = 'Updated ' + response.data.updated + ' articles';
+                            if (response.data.roundups_updated) {
+                                message += ', ' + response.data.roundups_updated + ' roundups';
+                            }
+                            message += ', skipped ' + response.data.skipped + ' (Total: ' + response.data.total + ')';
+
+                            $result.html('<div class="notice notice-success"><p><strong>Success!</strong> ' + message + '</p></div>');
                             $btn.prop('disabled', false).text('Re-tag All Existing Posts');
                         } else {
                             $result.html('<div class="notice notice-error"><p><strong>Error:</strong> ' +
@@ -5366,6 +5370,31 @@ CONTENT: [rewritten content]";
             update_post_meta($post_id, 'envirolink_roundup_date', current_time('mysql'));
             update_post_meta($post_id, 'envirolink_roundup_article_count', count($articles));
 
+            // Apply ontology-based tags from included articles
+            if (get_option('envirolink_ontology_enabled', 'no') === 'yes') {
+                $this->log_message('Applying ontology tags from included articles...');
+                $all_tags = array();
+
+                // Collect tags from all articles in the roundup
+                foreach ($articles as $article) {
+                    $article_tags = wp_get_post_tags($article->ID, array('fields' => 'names'));
+                    if (!empty($article_tags)) {
+                        $all_tags = array_merge($all_tags, $article_tags);
+                    }
+                }
+
+                // Get unique tags
+                $all_tags = array_unique($all_tags);
+
+                if (!empty($all_tags)) {
+                    // Apply tags to roundup
+                    wp_set_post_tags($post_id, $all_tags, false);
+                    $this->log_message('→ Applied ' . count($all_tags) . ' ontology tags: ' . implode(', ', $all_tags));
+                } else {
+                    $this->log_message('→ No tags found on included articles');
+                }
+            }
+
             // Set AIOSEO meta for better SEO (using AI-derived fields)
             if (function_exists('aioseo')) {
                 update_post_meta($post_id, '_aioseo_title', $seo_title); // SEO title (≤60 chars)
@@ -6713,19 +6742,31 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
      * Bulk re-tag all posts using ontology
      */
     public function retag_all_posts_with_ontology() {
-        $args = array(
+        // Get RSS-aggregated posts
+        $rss_posts = get_posts(array(
             'post_type' => 'post',
             'post_status' => 'any',
             'posts_per_page' => -1,
             'meta_key' => 'envirolink_source_url',
             'meta_compare' => 'EXISTS'
-        );
+        ));
 
-        $posts = get_posts($args);
+        // Get roundup posts
+        $roundup_posts = get_posts(array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_is_roundup',
+            'meta_value' => 'yes',
+            'meta_compare' => '='
+        ));
+
         $updated = 0;
         $skipped = 0;
+        $roundups_updated = 0;
 
-        foreach ($posts as $post) {
+        // Process RSS-aggregated posts
+        foreach ($rss_posts as $post) {
             $rss_tags = get_post_meta($post->ID, 'envirolink_topic_tags', true);
 
             if (empty($rss_tags)) {
@@ -6746,11 +6787,50 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             }
         }
 
+        // Process roundup posts - collect tags from their articles
+        foreach ($roundup_posts as $roundup) {
+            // Get articles from roundup content (they're linked in the post)
+            // Alternative: Get recent articles (approximation)
+            $articles = get_posts(array(
+                'post_type' => 'post',
+                'posts_per_page' => 30,
+                'meta_key' => 'envirolink_source_url',
+                'meta_compare' => 'EXISTS',
+                'orderby' => 'ID',
+                'order' => 'DESC',
+                'date_query' => array(
+                    array(
+                        'before' => $roundup->post_date,
+                        'inclusive' => true
+                    )
+                )
+            ));
+
+            $all_tags = array();
+            foreach ($articles as $article) {
+                $article_tags = wp_get_post_tags($article->ID, array('fields' => 'names'));
+                if (!empty($article_tags)) {
+                    $all_tags = array_merge($all_tags, $article_tags);
+                }
+            }
+
+            $all_tags = array_unique($all_tags);
+
+            if (!empty($all_tags)) {
+                wp_set_post_tags($roundup->ID, $all_tags, false);
+                $roundups_updated++;
+            } else {
+                wp_set_post_tags($roundup->ID, array(), false);
+                $skipped++;
+            }
+        }
+
         return array(
             'success' => true,
             'updated' => $updated,
+            'roundups_updated' => $roundups_updated,
             'skipped' => $skipped,
-            'total' => count($posts)
+            'total' => count($rss_posts) + count($roundup_posts)
         );
     }
 
