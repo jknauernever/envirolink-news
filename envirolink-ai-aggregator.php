@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.45.1
+ * Version: 1.46.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.45.1');
+define('ENVIROLINK_VERSION', '1.46.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -78,6 +78,11 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
+
+        // Ontology management AJAX handlers
+        add_action('wp_ajax_envirolink_seed_ontology', array($this, 'ajax_seed_ontology'));
+        add_action('wp_ajax_envirolink_clear_ontology', array($this, 'ajax_clear_ontology'));
+        add_action('wp_ajax_envirolink_retag_posts', array($this, 'ajax_retag_posts'));
 
         // Public AJAX endpoint for system cron (no authentication required, uses secret key)
         add_action('wp_ajax_nopriv_envirolink_cron_roundup', array($this, 'ajax_cron_roundup'));
@@ -143,6 +148,13 @@ class EnviroLink_AI_Aggregator {
         if (!get_option('envirolink_daily_roundup_enabled')) {
             add_option('envirolink_daily_roundup_enabled', 'no');
         }
+
+        if (!get_option('envirolink_ontology_enabled')) {
+            add_option('envirolink_ontology_enabled', 'no');
+        }
+
+        // Create ontology database tables
+        $this->create_ontology_tables();
 
         // Schedule cron job (hourly)
         if (!wp_next_scheduled('envirolink_fetch_feeds')) {
@@ -267,6 +279,7 @@ class EnviroLink_AI_Aggregator {
         register_setting('envirolink_settings', 'envirolink_post_status');
         register_setting('envirolink_settings', 'envirolink_update_existing');
         register_setting('envirolink_settings', 'envirolink_randomize_daily_order');
+        register_setting('envirolink_settings', 'envirolink_ontology_enabled');
     }
     
     /**
@@ -310,6 +323,7 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
             update_option('envirolink_unsplash_api_key', sanitize_text_field($_POST['unsplash_api_key']));
             update_option('envirolink_cron_secret_key', sanitize_text_field($_POST['cron_secret_key']));
+            update_option('envirolink_ontology_enabled', isset($_POST['ontology_enabled']) ? 'yes' : 'no');
 
             // Save roundup images collection
             if (isset($_POST['roundup_images'])) {
@@ -611,6 +625,7 @@ class EnviroLink_AI_Aggregator {
                 <a href="#settings" class="nav-tab nav-tab-active">Settings</a>
                 <a href="#feeds" class="nav-tab">RSS Feeds</a>
                 <a href="#articles" class="nav-tab">Articles</a>
+                <a href="#ontology" class="nav-tab">Ontology</a>
             </h2>
 
             <div id="settings-tab" class="tab-content">
@@ -735,6 +750,22 @@ class EnviroLink_AI_Aggregator {
                                        style="width: 80px;" />
                                 <label for="keyword_daily_limit"> articles per topic per day</label>
                                 <p class="description">Prevents redundant coverage of the same event. Before publishing an article, the plugin extracts keywords from the RSS title and checks if similar articles were already published today (same calendar date). If the daily limit is reached, the article is skipped. The counter resets at midnight. This prevents multiple outlets covering the same story (e.g., 6 different "COP30 ends" articles). <strong>Recommended: 2-3 articles per topic.</strong> Set higher (5-10) if you want comprehensive multi-source coverage of major events.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                Environmental Ontology Filtering
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="ontology_enabled" id="ontology_enabled"
+                                           <?php checked(get_option('envirolink_ontology_enabled', 'no'), 'yes'); ?> />
+                                    Enable ontology-based tag filtering
+                                </label>
+                                <p class="description">
+                                    When enabled, RSS feed tags are filtered through a curated environmental news taxonomy based on IPTC Media Topics and UN Sustainable Development Goals. Only tags matching topics in the ontology will be applied to articles. This eliminates junk tags like "World News", "Homepage", "Breaking" and ensures consistent, relevant tagging. <strong>Requires ontology database to be seeded first</strong> - visit the <a href="#" onclick="$('.nav-tab').removeClass('nav-tab-active'); $('.nav-tab[href=\'#ontology\']').addClass('nav-tab-active'); $('.tab-content').hide(); $('#ontology-tab').show(); return false;">Ontology tab</a> to set up.
+                                </p>
                             </td>
                         </tr>
 
@@ -1201,6 +1232,147 @@ class EnviroLink_AI_Aggregator {
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                <?php endif; ?>
+            </div>
+
+            <!-- Ontology Tab -->
+            <div id="ontology-tab" class="tab-content" style="display: none;">
+                <h3>Environmental News Ontology</h3>
+                <p class="description">
+                    Manage your standardized environmental taxonomy based on IPTC Media Topics and UN Sustainable Development Goals.
+                    The ontology filters RSS feed tags to ensure only relevant environmental topics are applied to articles.
+                </p>
+
+                <?php
+                $ontology_seeded = get_option('envirolink_ontology_seeded', false);
+                $ontology_enabled = get_option('envirolink_ontology_enabled', 'no');
+                $seed_date = get_option('envirolink_ontology_seed_date', '');
+                $topics = $this->get_all_ontology_topics();
+                ?>
+
+                <div class="card" style="max-width: none; margin-top: 20px;">
+                    <h3>Ontology Status</h3>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Database Status</th>
+                            <td>
+                                <?php if ($ontology_seeded): ?>
+                                    <span style="color: green;">✓ Seeded (<?php echo count($topics); ?> topics)</span>
+                                    <?php if ($seed_date): ?>
+                                        <br><small>Last seeded: <?php echo esc_html($seed_date); ?></small>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span style="color: orange;">⚠ Not seeded</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Filtering Status</th>
+                            <td>
+                                <?php if ($ontology_enabled === 'yes'): ?>
+                                    <span style="color: green;">✓ Enabled</span> - RSS tags are filtered through ontology
+                                <?php else: ?>
+                                    <span style="color: gray;">○ Disabled</span> - Raw RSS tags are used (legacy mode)
+                                <?php endif; ?>
+                                <p class="description">
+                                    Enable ontology filtering in the Settings tab to start using curated tags.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <h3>Actions</h3>
+                    <p>
+                        <button type="button" id="seed-ontology-btn" class="button button-primary"
+                                <?php echo $ontology_seeded ? 'disabled' : ''; ?>>
+                            Seed Ontology Database
+                        </button>
+                        <span class="description">
+                            Populate database with 40+ curated environmental topics from IPTC and UN SDGs.
+                        </span>
+                    </p>
+
+                    <p>
+                        <button type="button" id="clear-ontology-btn" class="button button-secondary"
+                                <?php echo !$ontology_seeded ? 'disabled' : ''; ?>>
+                            Clear Ontology Database
+                        </button>
+                        <span class="description">
+                            Remove all ontology data (required before re-seeding).
+                        </span>
+                    </p>
+
+                    <p>
+                        <button type="button" id="retag-posts-btn" class="button button-secondary"
+                                <?php echo (!$ontology_seeded || $ontology_enabled !== 'yes') ? 'disabled' : ''; ?>>
+                            Re-tag All Existing Posts
+                        </button>
+                        <span class="description">
+                            Apply ontology filtering to all existing EnviroLink posts (may take a while).
+                        </span>
+                    </p>
+
+                    <div id="ontology-action-result" style="margin-top: 15px;"></div>
+                </div>
+
+                <?php if ($ontology_seeded && !empty($topics)): ?>
+                    <div class="card" style="max-width: none; margin-top: 20px;">
+                        <h3>Topic Taxonomy (<?php echo count($topics); ?> topics)</h3>
+                        <p class="description">
+                            This is the complete environmental news taxonomy. Topics are organized hierarchically and mapped to UN SDGs.
+                        </p>
+
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;">Level</th>
+                                    <th style="width: 100px;">IPTC Code</th>
+                                    <th>Topic</th>
+                                    <th style="width: 200px;">UN SDGs</th>
+                                    <th style="width: 80px;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php
+                                foreach ($topics as $topic):
+                                    $topic_details = $this->get_topic_details($topic->id);
+                                    $indent = str_repeat('&nbsp;&nbsp;&nbsp;&nbsp;', $topic->level);
+                                    $sdg_badges = '';
+                                    if (!empty($topic_details->sdgs)) {
+                                        $sdg_numbers = array_column($topic_details->sdgs, 'sdg_number');
+                                        $sdg_badges = implode(', ', array_map(function($num) {
+                                            return 'SDG ' . $num;
+                                        }, $sdg_numbers));
+                                    }
+                                ?>
+                                    <tr>
+                                        <td><?php echo esc_html($topic->level); ?></td>
+                                        <td><code><?php echo esc_html($topic->iptc_code); ?></code></td>
+                                        <td>
+                                            <?php echo $indent; ?>
+                                            <strong><?php echo esc_html($topic->label); ?></strong>
+                                            <?php if ($topic->definition): ?>
+                                                <br><?php echo $indent; ?>
+                                                <small style="color: #666;"><?php echo esc_html($topic->definition); ?></small>
+                                            <?php endif; ?>
+                                            <?php if (!empty($topic_details->aliases)): ?>
+                                                <br><?php echo $indent; ?>
+                                                <small style="color: #888;">
+                                                    Aliases: <?php echo esc_html(implode(', ', array_column($topic_details->aliases, 'alias'))); ?>
+                                                </small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><small><?php echo esc_html($sdg_badges); ?></small></td>
+                                        <td>
+                                            <span style="color: <?php echo $topic->status === 'active' ? 'green' : 'gray'; ?>;">
+                                                <?php echo esc_html(ucfirst($topic->status)); ?>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -1768,6 +1940,120 @@ class EnviroLink_AI_Aggregator {
                         $('.description').last().html('<strong>Tip:</strong> Upload high-quality environmental images (nature, earth, climate themes). Currently ' + count + ' image(s) in collection.');
                     });
                 }
+            });
+
+            // Ontology Management Buttons
+            $('#seed-ontology-btn').click(function() {
+                if (!confirm('This will populate the database with 40+ environmental topics from IPTC and UN SDGs. Continue?')) {
+                    return;
+                }
+
+                var $btn = $(this);
+                var $result = $('#ontology-action-result');
+
+                $btn.prop('disabled', true).text('Seeding...');
+                $result.html('<div class="notice notice-info"><p>Seeding ontology database...</p></div>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    method: 'POST',
+                    data: {
+                        action: 'envirolink_seed_ontology',
+                        nonce: '<?php echo wp_create_nonce('envirolink_admin_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $result.html('<div class="notice notice-success"><p><strong>Success!</strong> ' +
+                                response.data.message + ' (' + response.data.topics_count + ' topics)</p></div>');
+                            setTimeout(function() {
+                                location.reload();
+                            }, 1500);
+                        } else {
+                            $result.html('<div class="notice notice-error"><p><strong>Error:</strong> ' +
+                                (response.data.message || 'Failed to seed ontology') + '</p></div>');
+                            $btn.prop('disabled', false).text('Seed Ontology Database');
+                        }
+                    },
+                    error: function() {
+                        $result.html('<div class="notice notice-error"><p><strong>Error:</strong> AJAX request failed</p></div>');
+                        $btn.prop('disabled', false).text('Seed Ontology Database');
+                    }
+                });
+            });
+
+            $('#clear-ontology-btn').click(function() {
+                if (!confirm('WARNING: This will delete ALL ontology data. Are you sure?')) {
+                    return;
+                }
+
+                var $btn = $(this);
+                var $result = $('#ontology-action-result');
+
+                $btn.prop('disabled', true).text('Clearing...');
+                $result.html('<div class="notice notice-info"><p>Clearing ontology database...</p></div>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    method: 'POST',
+                    data: {
+                        action: 'envirolink_clear_ontology',
+                        nonce: '<?php echo wp_create_nonce('envirolink_admin_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $result.html('<div class="notice notice-success"><p><strong>Success!</strong> ' +
+                                response.data.message + '</p></div>');
+                            setTimeout(function() {
+                                location.reload();
+                            }, 1500);
+                        } else {
+                            $result.html('<div class="notice notice-error"><p><strong>Error:</strong> ' +
+                                (response.data.message || 'Failed to clear ontology') + '</p></div>');
+                            $btn.prop('disabled', false).text('Clear Ontology Database');
+                        }
+                    },
+                    error: function() {
+                        $result.html('<div class="notice notice-error"><p><strong>Error:</strong> AJAX request failed</p></div>');
+                        $btn.prop('disabled', false).text('Clear Ontology Database');
+                    }
+                });
+            });
+
+            $('#retag-posts-btn').click(function() {
+                if (!confirm('This will re-tag all EnviroLink posts using the ontology. This may take a while. Continue?')) {
+                    return;
+                }
+
+                var $btn = $(this);
+                var $result = $('#ontology-action-result');
+
+                $btn.prop('disabled', true).text('Re-tagging...');
+                $result.html('<div class="notice notice-info"><p>Re-tagging all posts with ontology filters...</p></div>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    method: 'POST',
+                    data: {
+                        action: 'envirolink_retag_posts',
+                        nonce: '<?php echo wp_create_nonce('envirolink_admin_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $result.html('<div class="notice notice-success"><p><strong>Success!</strong> ' +
+                                'Updated ' + response.data.updated + ' posts, skipped ' + response.data.skipped +
+                                ' (Total: ' + response.data.total + ')</p></div>');
+                            $btn.prop('disabled', false).text('Re-tag All Existing Posts');
+                        } else {
+                            $result.html('<div class="notice notice-error"><p><strong>Error:</strong> ' +
+                                (response.data.message || 'Failed to re-tag posts') + '</p></div>');
+                            $btn.prop('disabled', false).text('Re-tag All Existing Posts');
+                        }
+                    },
+                    error: function() {
+                        $result.html('<div class="notice notice-error"><p><strong>Error:</strong> AJAX request failed</p></div>');
+                        $btn.prop('disabled', false).text('Re-tag All Existing Posts');
+                    }
+                });
             });
         });
         </script>
@@ -3842,8 +4128,18 @@ class EnviroLink_AI_Aggregator {
 
                             // Convert topic tags to WordPress tags
                             if (isset($feed_metadata['topic_tags'])) {
-                                $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
-                                wp_set_post_tags($post_id, $tag_array, false);
+                                // Check if ontology filtering is enabled
+                                if (get_option('envirolink_ontology_enabled', 'no') === 'yes') {
+                                    // Filter tags through ontology
+                                    $filtered_tags = $this->filter_tags_with_ontology($feed_metadata['topic_tags']);
+                                    if (!empty($filtered_tags)) {
+                                        wp_set_post_tags($post_id, $filtered_tags, false);
+                                    }
+                                } else {
+                                    // Use raw RSS tags (legacy behavior)
+                                    $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
+                                    wp_set_post_tags($post_id, $tag_array, false);
+                                }
                             }
 
                             // Update featured image if found
@@ -3969,8 +4265,21 @@ class EnviroLink_AI_Aggregator {
 
                         // Convert topic tags to WordPress tags
                         if (isset($feed_metadata['topic_tags'])) {
-                            $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
-                            wp_set_post_tags($post_id, $tag_array, false);
+                            // Check if ontology filtering is enabled
+                            if (get_option('envirolink_ontology_enabled', 'no') === 'yes') {
+                                // Filter tags through ontology
+                                $filtered_tags = $this->filter_tags_with_ontology($feed_metadata['topic_tags']);
+                                if (!empty($filtered_tags)) {
+                                    wp_set_post_tags($post_id, $filtered_tags, false);
+                                    $this->log_message('    → Applied ' . count($filtered_tags) . ' ontology-filtered tags: ' . implode(', ', $filtered_tags));
+                                } else {
+                                    $this->log_message('    → No ontology matches for RSS tags, post left untagged');
+                                }
+                            } else {
+                                // Use raw RSS tags (legacy behavior)
+                                $tag_array = array_map('trim', explode(',', $feed_metadata['topic_tags']));
+                                wp_set_post_tags($post_id, $tag_array, false);
+                            }
                         }
 
                         // Set featured image if found
@@ -5895,6 +6204,561 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         error_log('EnviroLink: [UNSPLASH] ✗ Failed to create attachment');
         return false;
     }
+
+    // ============================================================================
+    // ONTOLOGY MANAGEMENT SYSTEM
+    // ============================================================================
+
+    /**
+     * Create database tables for environmental news ontology
+     * Tables: topics, topic_sdg_mapping, topic_aliases
+     */
+    private function create_ontology_tables() {
+        global $wpdb;
+
+        $charset_collate = $wpdb->get_charset_collate();
+
+        // Table 1: envirolink_topics - Core taxonomy
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+        $sql_topics = "CREATE TABLE IF NOT EXISTS $table_topics (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            iptc_code varchar(20) DEFAULT NULL,
+            label varchar(255) NOT NULL,
+            slug varchar(255) NOT NULL,
+            definition text DEFAULT NULL,
+            parent_id bigint(20) UNSIGNED DEFAULT NULL,
+            level int(11) DEFAULT 0,
+            source enum('iptc','custom') DEFAULT 'iptc',
+            status enum('active','inactive','retired') DEFAULT 'active',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY slug (slug),
+            KEY iptc_code (iptc_code),
+            KEY parent_id (parent_id),
+            KEY status (status),
+            KEY source (source)
+        ) $charset_collate;";
+
+        // Table 2: envirolink_topic_sdg_mapping - Many-to-many SDG relationships
+        $table_sdg = $wpdb->prefix . 'envirolink_topic_sdg_mapping';
+        $sql_sdg = "CREATE TABLE IF NOT EXISTS $table_sdg (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            topic_id bigint(20) UNSIGNED NOT NULL,
+            sdg_number int(11) NOT NULL,
+            sdg_name varchar(255) NOT NULL,
+            relevance enum('primary','secondary') DEFAULT 'primary',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY topic_id (topic_id),
+            KEY sdg_number (sdg_number),
+            UNIQUE KEY topic_sdg (topic_id, sdg_number)
+        ) $charset_collate;";
+
+        // Table 3: envirolink_topic_aliases - Alternative names/variations for matching
+        $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
+        $sql_aliases = "CREATE TABLE IF NOT EXISTS $table_aliases (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            topic_id bigint(20) UNSIGNED NOT NULL,
+            alias varchar(255) NOT NULL,
+            alias_type enum('synonym','plural','abbreviation','related') DEFAULT 'synonym',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY topic_id (topic_id),
+            KEY alias (alias)
+        ) $charset_collate;";
+
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql_topics);
+        dbDelta($sql_sdg);
+        dbDelta($sql_aliases);
+
+        // Mark that tables have been created
+        update_option('envirolink_ontology_tables_created', true);
+    }
+
+    /**
+     * Fetch IPTC Media Topics from official API
+     * Returns array of topic data or WP_Error on failure
+     */
+    private function fetch_iptc_topic($medtop_code) {
+        $url = 'https://cv.iptc.org/newscodes/mediatopic/' . $medtop_code;
+
+        $response = wp_remote_get($url, array(
+            'timeout' => 30,
+            'headers' => array(
+                'Accept' => 'application/ld+json'
+            )
+        ));
+
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error('json_error', 'Failed to parse IPTC response');
+        }
+
+        return $data;
+    }
+
+    /**
+     * Seed ontology database with curated environmental topics from IPTC and custom additions
+     * This is manually curated to include only relevant environmental topics
+     */
+    public function seed_ontology_database() {
+        global $wpdb;
+
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+        $table_sdg = $wpdb->prefix . 'envirolink_topic_sdg_mapping';
+        $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
+
+        // Check if already seeded
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM $table_topics");
+        if ($count > 0) {
+            return array('success' => false, 'message' => 'Database already seeded. Clear first if re-seeding.');
+        }
+
+        // CURATED ENVIRONMENTAL TOPICS
+        // Structure: [iptc_code, label, definition, parent_iptc_code, sdgs[], aliases[]]
+        $topics = array(
+            // Level 0: Root
+            array('06000000', 'Environment', 'The protection, damage, and condition of the ecosystem of the planet Earth and its surroundings', null, array(13, 14, 15), array('environmental', 'ecology', 'ecological')),
+
+            // Level 1: Main Categories
+            array('20000418', 'Climate Change', 'Extreme changes in climate, including rising global temperature, greenhouse gases and ways to reduce emissions', '06000000', array(13, 7, 11), array('climate crisis', 'global warming', 'climate action')),
+
+            array('20000420', 'Conservation', 'Preservation of the natural world, such as wilderness areas, flora and fauna', '06000000', array(14, 15), array('nature conservation', 'wildlife conservation', 'preservation')),
+
+            array('20000424', 'Environmental Pollution', 'The contamination of natural resources by harmful substances', '06000000', array(3, 6, 12, 14, 15), array('pollution', 'contamination', 'environmental contamination')),
+
+            array('20000430', 'Natural Resources', 'Materials and energy sources found in nature that humans use', '06000000', array(7, 12, 15), array('natural resource management', 'resource conservation')),
+
+            array('20000441', 'Renewable Energy', 'Energy from sources that naturally replenish', '06000000', array(7, 13), array('clean energy', 'green energy', 'sustainable energy')),
+
+            // Level 2: Climate Change subcategories
+            array('20001374', 'Carbon Emissions', 'Release of carbon dioxide and other greenhouse gases into the atmosphere', '20000418', array(13, 9), array('CO2 emissions', 'greenhouse gas emissions', 'carbon footprint')),
+
+            array('20001375', 'Climate Adaptation', 'Adjustments in response to actual or expected climate change effects', '20000418', array(13, 11), array('climate resilience', 'adaptation strategies')),
+
+            array('20001376', 'Climate Mitigation', 'Actions to reduce greenhouse gas emissions and limit climate change', '20000418', array(13, 7), array('emissions reduction', 'climate solutions')),
+
+            // Level 2: Conservation subcategories
+            array('20000421', 'Endangered Species', 'Species at risk of extinction', '20000420', array(14, 15), array('threatened species', 'at-risk species', 'extinction risk')),
+
+            array('20000422', 'Wildlife Protection', 'Efforts to protect wild animals and their habitats', '20000420', array(15), array('wildlife preservation', 'animal conservation')),
+
+            array('20001377', 'Biodiversity', 'Variety of life forms in an ecosystem or on Earth', '20000420', array(14, 15), array('biological diversity', 'ecosystem diversity', 'species diversity')),
+
+            array('20001378', 'Habitat Protection', 'Preservation of natural environments where species live', '20000420', array(15), array('habitat conservation', 'ecosystem protection')),
+
+            array('20001379', 'Deforestation', 'Clearing or removal of forests', '20000420', array(13, 15), array('forest loss', 'forest clearing', 'tree removal')),
+
+            // Level 2: Pollution subcategories
+            array('20000425', 'Air Pollution', 'Contamination of the atmosphere by harmful substances', '20000424', array(3, 11, 13), array('air quality', 'atmospheric pollution', 'smog')),
+
+            array('20000426', 'Water Pollution', 'Contamination of water bodies by pollutants', '20000424', array(6, 14), array('water contamination', 'aquatic pollution')),
+
+            array('20000427', 'Soil Pollution', 'Contamination of soil by harmful substances', '20000424', array(2, 15), array('soil contamination', 'land pollution')),
+
+            array('20000428', 'Noise Pollution', 'Harmful or annoying levels of noise', '20000424', array(11), array('sound pollution', 'acoustic pollution')),
+
+            array('20000429', 'Light Pollution', 'Excessive artificial light in the environment', '20000424', array(11), array('sky glow', 'light trespass')),
+
+            array('20001380', 'Plastic Pollution', 'Accumulation of plastic products in the environment', '20000424', array(12, 14), array('plastic waste', 'microplastics', 'ocean plastic')),
+
+            // Level 2: Natural Resources subcategories
+            array('20001381', 'Water Resources', 'Sources of water that are useful or potentially useful', '20000430', array(6), array('freshwater', 'water supply', 'water sources')),
+
+            array('20001382', 'Forest Resources', 'Forests as a source of materials and ecological services', '20000430', array(15), array('forestry', 'timber resources')),
+
+            array('20001383', 'Mineral Resources', 'Naturally occurring minerals that can be extracted', '20000430', array(12), array('mining', 'mineral extraction')),
+
+            array('20001384', 'Ocean Resources', 'Marine resources including fisheries and minerals', '20000430', array(14), array('marine resources', 'fisheries', 'ocean mining')),
+
+            // Level 2: Renewable Energy subcategories
+            array('20001385', 'Solar Energy', 'Energy from the sun converted to thermal or electric energy', '20000441', array(7, 13), array('solar power', 'photovoltaic', 'solar panels')),
+
+            array('20001386', 'Wind Energy', 'Energy generated from wind using turbines', '20000441', array(7, 13), array('wind power', 'wind turbines', 'wind farms')),
+
+            array('20001387', 'Hydroelectric Energy', 'Electricity generated from flowing water', '20000441', array(7, 13), array('hydropower', 'hydro energy', 'water power')),
+
+            array('20001388', 'Geothermal Energy', 'Heat energy from within the Earth', '20000441', array(7, 13), array('geothermal power', 'earth heat')),
+
+            array('20001389', 'Biomass Energy', 'Energy from organic materials', '20000441', array(7, 13), array('bioenergy', 'biofuel', 'organic energy')),
+
+            // Additional important topics
+            array('20001390', 'Sustainability', 'Meeting present needs without compromising future generations', '06000000', array(12, 17), array('sustainable development', 'sustainability practices')),
+
+            array('20001391', 'Environmental Justice', 'Fair treatment of all people regarding environmental policies', '06000000', array(10, 16), array('environmental equity', 'environmental rights')),
+
+            array('20001392', 'Circular Economy', 'Economic system aimed at eliminating waste and continual use of resources', '20001390', array(12, 9), array('zero waste', 'closed-loop economy')),
+
+            array('20001393', 'Green Technology', 'Technology designed to reduce environmental impact', '20001390', array(9, 12, 13), array('cleantech', 'environmental technology', 'eco-technology')),
+
+            array('20001394', 'Environmental Policy', 'Government policies related to environmental protection', '06000000', array(13, 16, 17), array('environmental regulation', 'environmental law')),
+
+            array('20001395', 'Ecosystem Services', 'Benefits humans receive from ecosystems', '06000000', array(15), array('ecological services', 'natural capital')),
+
+            // Natural Disasters (from disaster section 03000000)
+            array('20000151', 'Natural Disasters', 'Destructive incidents caused by nature', '06000000', array(13, 11), array('natural hazards', 'disasters')),
+
+            array('20000152', 'Drought', 'Severe lack of water over a period of time', '20000151', array(2, 13), array('water shortage', 'arid conditions')),
+
+            array('20000154', 'Flood', 'Overflow of water in normally dry areas', '20000151', array(11, 13), array('flooding', 'inundation')),
+
+            array('20001396', 'Wildfire', 'Uncontrolled fire in wilderness areas', '20000151', array(13, 15), array('forest fire', 'bushfire', 'wildland fire')),
+
+            array('20001397', 'Hurricane', 'Severe tropical storm with strong winds', '20000151', array(11, 13), array('typhoon', 'tropical cyclone', 'cyclone')),
+
+            array('20001398', 'Sea Level Rise', 'Increase in ocean levels due to climate change', '20000418', array(13, 14), array('rising sea levels', 'coastal flooding')),
+        );
+
+        // Insert topics and build parent-child map
+        $inserted_ids = array();
+        $parent_map = array();
+
+        foreach ($topics as $topic_data) {
+            list($iptc_code, $label, $definition, $parent_iptc, $sdgs, $aliases) = $topic_data;
+
+            $slug = sanitize_title($label);
+            $level = ($parent_iptc === null) ? 0 : 1; // Will calculate actual level after all inserts
+
+            $wpdb->insert($table_topics, array(
+                'iptc_code' => $iptc_code,
+                'label' => $label,
+                'slug' => $slug,
+                'definition' => $definition,
+                'parent_id' => null, // Will update in second pass
+                'level' => $level,
+                'source' => 'iptc',
+                'status' => 'active'
+            ));
+
+            $topic_id = $wpdb->insert_id;
+            $inserted_ids[$iptc_code] = $topic_id;
+
+            if ($parent_iptc !== null) {
+                $parent_map[$iptc_code] = $parent_iptc;
+            }
+
+            // Insert SDG mappings
+            foreach ($sdgs as $sdg_number) {
+                $sdg_name = $this->get_sdg_name($sdg_number);
+                $relevance = (count($sdgs) === 1 || $sdg_number === $sdgs[0]) ? 'primary' : 'secondary';
+
+                $wpdb->insert($table_sdg, array(
+                    'topic_id' => $topic_id,
+                    'sdg_number' => $sdg_number,
+                    'sdg_name' => $sdg_name,
+                    'relevance' => $relevance
+                ));
+            }
+
+            // Insert aliases
+            foreach ($aliases as $alias) {
+                $wpdb->insert($table_aliases, array(
+                    'topic_id' => $topic_id,
+                    'alias' => $alias,
+                    'alias_type' => 'synonym'
+                ));
+            }
+        }
+
+        // Second pass: Update parent_id and calculate levels
+        foreach ($parent_map as $child_iptc => $parent_iptc) {
+            if (isset($inserted_ids[$child_iptc]) && isset($inserted_ids[$parent_iptc])) {
+                $child_id = $inserted_ids[$child_iptc];
+                $parent_id = $inserted_ids[$parent_iptc];
+
+                // Get parent level
+                $parent_level = $wpdb->get_var($wpdb->prepare(
+                    "SELECT level FROM $table_topics WHERE id = %d",
+                    $parent_id
+                ));
+
+                // Update child
+                $wpdb->update(
+                    $table_topics,
+                    array(
+                        'parent_id' => $parent_id,
+                        'level' => $parent_level + 1
+                    ),
+                    array('id' => $child_id)
+                );
+            }
+        }
+
+        update_option('envirolink_ontology_seeded', true);
+        update_option('envirolink_ontology_seed_date', current_time('mysql'));
+
+        return array(
+            'success' => true,
+            'message' => 'Ontology database seeded successfully',
+            'topics_count' => count($topics)
+        );
+    }
+
+    /**
+     * Get UN SDG name from number
+     */
+    private function get_sdg_name($number) {
+        $sdgs = array(
+            1 => 'No Poverty',
+            2 => 'Zero Hunger',
+            3 => 'Good Health and Well-Being',
+            4 => 'Quality Education',
+            5 => 'Gender Equality',
+            6 => 'Clean Water and Sanitation',
+            7 => 'Affordable and Clean Energy',
+            8 => 'Decent Work and Economic Growth',
+            9 => 'Industry, Innovation and Infrastructure',
+            10 => 'Reduced Inequalities',
+            11 => 'Sustainable Cities and Communities',
+            12 => 'Responsible Consumption and Production',
+            13 => 'Climate Action',
+            14 => 'Life Below Water',
+            15 => 'Life on Land',
+            16 => 'Peace, Justice and Strong Institutions',
+            17 => 'Partnerships for the Goals'
+        );
+
+        return isset($sdgs[$number]) ? $sdgs[$number] : 'Unknown SDG';
+    }
+
+    /**
+     * Filter RSS tags against ontology
+     * Returns array of matching topic labels
+     */
+    public function filter_tags_with_ontology($rss_tags) {
+        global $wpdb;
+
+        if (empty($rss_tags) || !is_string($rss_tags)) {
+            return array();
+        }
+
+        // Split tags
+        $input_tags = array_map('trim', explode(',', $rss_tags));
+        $matched_topics = array();
+
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+        $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
+
+        foreach ($input_tags as $tag) {
+            $tag_lower = strtolower($tag);
+
+            // Try exact match on label or slug
+            $topic = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, label FROM $table_topics
+                WHERE status = 'active'
+                AND (LOWER(label) = %s OR LOWER(slug) = %s)
+                LIMIT 1",
+                $tag_lower,
+                $tag_lower
+            ));
+
+            if ($topic) {
+                $matched_topics[$topic->id] = $topic->label;
+                continue;
+            }
+
+            // Try alias match
+            $alias_match = $wpdb->get_row($wpdb->prepare(
+                "SELECT t.id, t.label
+                FROM $table_aliases a
+                JOIN $table_topics t ON a.topic_id = t.id
+                WHERE LOWER(a.alias) = %s
+                AND t.status = 'active'
+                LIMIT 1",
+                $tag_lower
+            ));
+
+            if ($alias_match) {
+                $matched_topics[$alias_match->id] = $alias_match->label;
+                continue;
+            }
+
+            // Try fuzzy match (LIKE with wildcards)
+            $fuzzy_topic = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, label FROM $table_topics
+                WHERE status = 'active'
+                AND (LOWER(label) LIKE %s OR LOWER(slug) LIKE %s)
+                LIMIT 1",
+                '%' . $wpdb->esc_like($tag_lower) . '%',
+                '%' . $wpdb->esc_like($tag_lower) . '%'
+            ));
+
+            if ($fuzzy_topic) {
+                $matched_topics[$fuzzy_topic->id] = $fuzzy_topic->label;
+            }
+        }
+
+        return array_values(array_unique($matched_topics));
+    }
+
+    /**
+     * Get all active topics for admin display
+     */
+    public function get_all_ontology_topics() {
+        global $wpdb;
+
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+
+        $topics = $wpdb->get_results(
+            "SELECT * FROM $table_topics
+            ORDER BY level ASC, label ASC"
+        );
+
+        return $topics;
+    }
+
+    /**
+     * Get topic with SDG mappings and aliases
+     */
+    public function get_topic_details($topic_id) {
+        global $wpdb;
+
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+        $table_sdg = $wpdb->prefix . 'envirolink_topic_sdg_mapping';
+        $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
+
+        $topic = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_topics WHERE id = %d",
+            $topic_id
+        ));
+
+        if (!$topic) {
+            return null;
+        }
+
+        // Get SDG mappings
+        $topic->sdgs = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_sdg WHERE topic_id = %d ORDER BY sdg_number",
+            $topic_id
+        ));
+
+        // Get aliases
+        $topic->aliases = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_aliases WHERE topic_id = %d",
+            $topic_id
+        ));
+
+        return $topic;
+    }
+
+    /**
+     * Clear all ontology data (for re-seeding)
+     */
+    public function clear_ontology_database() {
+        global $wpdb;
+
+        $table_topics = $wpdb->prefix . 'envirolink_topics';
+        $table_sdg = $wpdb->prefix . 'envirolink_topic_sdg_mapping';
+        $table_aliases = $wpdb->prefix . 'envirolink_topic_aliases';
+
+        $wpdb->query("TRUNCATE TABLE $table_aliases");
+        $wpdb->query("TRUNCATE TABLE $table_sdg");
+        $wpdb->query("TRUNCATE TABLE $table_topics");
+
+        delete_option('envirolink_ontology_seeded');
+        delete_option('envirolink_ontology_seed_date');
+
+        return array('success' => true, 'message' => 'Ontology database cleared successfully');
+    }
+
+    /**
+     * Bulk re-tag all posts using ontology
+     */
+    public function retag_all_posts_with_ontology() {
+        $args = array(
+            'post_type' => 'post',
+            'post_status' => 'any',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS'
+        );
+
+        $posts = get_posts($args);
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ($posts as $post) {
+            $rss_tags = get_post_meta($post->ID, 'envirolink_topic_tags', true);
+
+            if (empty($rss_tags)) {
+                $skipped++;
+                continue;
+            }
+
+            // Filter through ontology
+            $filtered_tags = $this->filter_tags_with_ontology($rss_tags);
+
+            if (!empty($filtered_tags)) {
+                wp_set_post_tags($post->ID, $filtered_tags, false);
+                $updated++;
+            } else {
+                // No matches, clear tags
+                wp_set_post_tags($post->ID, array(), false);
+                $skipped++;
+            }
+        }
+
+        return array(
+            'success' => true,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'total' => count($posts)
+        );
+    }
+
+    /**
+     * AJAX: Seed ontology database
+     */
+    public function ajax_seed_ontology() {
+        check_ajax_referer('envirolink_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $result = $this->seed_ontology_database();
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Clear ontology database
+     */
+    public function ajax_clear_ontology() {
+        check_ajax_referer('envirolink_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $result = $this->clear_ontology_database();
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Re-tag all posts using ontology
+     */
+    public function ajax_retag_posts() {
+        check_ajax_referer('envirolink_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $result = $this->retag_all_posts_with_ontology();
+        wp_send_json_success($result);
+    }
+
+    // ============================================================================
+    // END ONTOLOGY MANAGEMENT SYSTEM
+    // ============================================================================
 
     /**
      * Output CSS for image captions (Unsplash attribution)
