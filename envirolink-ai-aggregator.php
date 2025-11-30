@@ -78,6 +78,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_generate_roundup', array($this, 'ajax_generate_roundup'));
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
+        add_action('wp_ajax_envirolink_fix_headlines', array($this, 'ajax_fix_headlines'));
 
         // Ontology management AJAX handlers
         add_action('wp_ajax_envirolink_seed_ontology', array($this, 'ajax_seed_ontology'));
@@ -544,6 +545,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="update-authors-btn" title="Change all post authors to EnviroLink Editor">
                                 <span class="dashicons dashicons-admin-users" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Update Authors
+                            </button>
+                            <button type="button" class="button" id="fix-headlines-btn" title="Fix capitalization on all existing headlines using AI (~$0.002/headline)" style="background: #9b59b6; border-color: #8e44ad; color: white;">
+                                <span class="dashicons dashicons-editor-textcolor" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Fix Headlines
                             </button>
                         </div>
 
@@ -1806,6 +1811,41 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
+            // Fix Headlines button
+            $('#fix-headlines-btn').click(function() {
+                if (!confirm('This will fix capitalization on ALL existing headlines using AI.\n\nEstimated cost: ~$0.002 per headline\n(e.g., 500 posts ≈ $1.00)\n\nThe process will:\n1. Check each headline\n2. Fix proper nouns, acronyms, and geographic names\n3. Skip headlines that are already correct\n\nThis may take several minutes for large numbers of posts.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_fix_headlines' },
+                    timeout: 600000, // 10 minutes timeout for large batches
+                    success: function(response) {
+                        stopProgressPolling();
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                        btn.prop('disabled', false);
+                    },
+                    error: function() {
+                        stopProgressPolling();
+                        status.html('<span style="color: red;">✗ Error occurred (timeout or server error)</span>');
+                        btn.prop('disabled', false);
+                    }
+                });
+            });
+
             // Generate Roundup Now button
             $('#generate-roundup-btn').click(function() {
                 if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
@@ -2288,6 +2328,30 @@ class EnviroLink_AI_Aggregator {
 
         try {
             $result = $this->update_all_authors();
+
+            if ($result['success']) {
+                wp_send_json_success(array('message' => $result['message']));
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Fix headline capitalization using AI
+     */
+    public function ajax_fix_headlines() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->fix_headline_capitalization();
 
             if ($result['success']) {
                 wp_send_json_success(array('message' => $result['message']));
@@ -3652,6 +3716,174 @@ class EnviroLink_AI_Aggregator {
             'success' => true,
             'message' => $message
         );
+    }
+
+    /**
+     * Fix headline capitalization for all existing posts using lightweight AI call
+     * Only sends headline to AI, not full content - ~10x cheaper than full rewrite
+     */
+    private function fix_headline_capitalization() {
+        $api_key = get_option('envirolink_api_key', '');
+        if (empty($api_key)) {
+            return array('success' => false, 'message' => 'API key not configured');
+        }
+
+        $this->log_message('Starting headline capitalization fix...');
+
+        // Get all EnviroLink posts (newsfeed articles)
+        $newsfeed_args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'meta_key' => 'envirolink_source_url',
+            'meta_compare' => 'EXISTS',
+            'post_status' => 'any'
+        );
+        $newsfeed_posts = get_posts($newsfeed_args);
+
+        // Get daily roundups
+        $roundup_args = array(
+            'post_type' => 'post',
+            'posts_per_page' => -1,
+            'post_status' => 'any',
+            's' => 'Daily Environmental News Roundup'
+        );
+        $roundup_posts = get_posts($roundup_args);
+
+        // Combine and deduplicate
+        $all_posts = array();
+        $seen_ids = array();
+        foreach (array_merge($newsfeed_posts, $roundup_posts) as $post) {
+            if (!isset($seen_ids[$post->ID])) {
+                $all_posts[] = $post;
+                $seen_ids[$post->ID] = true;
+            }
+        }
+
+        $total_posts = count($all_posts);
+
+        if ($total_posts == 0) {
+            $this->log_message('No posts found to process');
+            return array('success' => true, 'message' => 'No posts to update');
+        }
+
+        $this->log_message("Found {$total_posts} posts to check");
+
+        // Estimate cost
+        $estimated_cost = $total_posts * 0.002; // ~$0.002 per headline
+        $this->log_message("Estimated API cost: ~$" . number_format($estimated_cost, 2));
+
+        $fixed_count = 0;
+        $skipped_count = 0;
+        $error_count = 0;
+
+        foreach ($all_posts as $index => $post) {
+            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $index + 1,
+                'total' => $total_posts,
+                'status' => 'Fixing headlines...'
+            ));
+
+            $current_title = $post->post_title;
+            $this->log_message("Processing: {$current_title}");
+
+            // Call lightweight AI to fix capitalization
+            $fixed_title = $this->fix_single_headline_with_ai($current_title, $api_key);
+
+            if ($fixed_title === false) {
+                $this->log_message("  → ✗ API error, skipping");
+                $error_count++;
+                continue;
+            }
+
+            // Check if title actually changed
+            if ($fixed_title === $current_title) {
+                $this->log_message("  → Already correct");
+                $skipped_count++;
+                continue;
+            }
+
+            // Update the post title
+            $result = wp_update_post(array(
+                'ID' => $post->ID,
+                'post_title' => $fixed_title
+            ), true);
+
+            if (is_wp_error($result)) {
+                $this->log_message("  → ✗ Error: " . $result->get_error_message());
+                $error_count++;
+            } else {
+                $this->log_message("  → ✓ Fixed: {$fixed_title}");
+                $fixed_count++;
+            }
+
+            // Small delay to avoid rate limiting
+            usleep(100000); // 100ms
+        }
+
+        $actual_cost = ($fixed_count + $skipped_count + $error_count) * 0.002;
+        $message = "Fixed {$fixed_count} headlines";
+        if ($skipped_count > 0) $message .= ", {$skipped_count} already correct";
+        if ($error_count > 0) $message .= ", {$error_count} errors";
+        $message .= " (est. cost: ~$" . number_format($actual_cost, 2) . ")";
+
+        $this->log_message('Complete: ' . $message);
+
+        return array(
+            'success' => true,
+            'message' => $message
+        );
+    }
+
+    /**
+     * Fix capitalization for a single headline using lightweight AI call
+     * Returns fixed headline or false on error
+     */
+    private function fix_single_headline_with_ai($headline, $api_key) {
+        $prompt = "Fix the capitalization of this news headline following AP/journalistic style rules:
+
+HEADLINE: {$headline}
+
+Capitalization rules:
+- Capitalize ALL proper nouns (names of people, places, organizations, rivers, mountains)
+- Capitalize ALL acronyms (EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.)
+- Capitalize ALL geographic locations (Amazon, Arctic, Pacific, Everglades, Great Barrier Reef)
+- Capitalize first word and all major words (nouns, verbs, adjectives, adverbs)
+- Lowercase articles (a, an, the), conjunctions (and, but, or), and short prepositions (in, on, at, to, for, of) UNLESS they are the first word
+
+Return ONLY the corrected headline, nothing else. If the headline is already correct, return it exactly as-is.";
+
+        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
+            'timeout' => 30,
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'x-api-key' => $api_key,
+                'anthropic-version' => '2023-06-01'
+            ),
+            'body' => json_encode(array(
+                'model' => 'claude-sonnet-4-20250514',
+                'max_tokens' => 200,
+                'messages' => array(
+                    array(
+                        'role' => 'user',
+                        'content' => $prompt
+                    )
+                )
+            ))
+        ));
+
+        if (is_wp_error($response)) {
+            return false;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!isset($body['content'][0]['text'])) {
+            return false;
+        }
+
+        return trim($body['content'][0]['text']);
     }
 
     /**
@@ -5051,6 +5283,14 @@ Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
 
+Headline capitalization rules (IMPORTANT):
+- Use standard AP/journalistic headline case
+- ALWAYS capitalize proper nouns: names of people, places, organizations, rivers, mountains, etc.
+- ALWAYS capitalize acronyms: EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.
+- ALWAYS capitalize geographic locations: Amazon, Arctic, Pacific, Everglades, Great Barrier Reef, etc.
+- Capitalize first word and all major words (nouns, verbs, adjectives, adverbs)
+- Lowercase articles (a, an, the), conjunctions (and, but, or), and short prepositions (in, on, at, to) unless first word
+
 Keep the core facts and maintain journalistic integrity. Make it informative and accessible to a general audience interested in environmental issues.
 
 Format your response as:
@@ -5709,6 +5949,12 @@ Style notes:
 - US headline case; no smart quotes; no emojis
 - Prefer concrete problem words: fires, floods, drilling, plastic, oil spill, toxic, wildfire, smoke, emissions, heatwave, drought, bleaching
 - Connect stories with: comma + conjunction, semicolons, or \"while/as\" for contrast
+
+Capitalization rules (CRITICAL):
+- ALWAYS capitalize proper nouns: names of people, places, organizations
+- ALWAYS capitalize acronyms: EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.
+- ALWAYS capitalize geographic locations: Amazon, Arctic, Pacific, Everglades, Great Barrier Reef, etc.
+- Capitalize first word and all major words; lowercase articles/conjunctions/short prepositions unless first word
 
 Safety & accuracy:
 - Don't overstate (\"millions\" → only if clearly indicated in the story)
