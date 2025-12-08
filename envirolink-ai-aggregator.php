@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.49.0
+ * Version: 1.49.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.49.0');
+define('ENVIROLINK_VERSION', '1.49.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -1811,9 +1811,9 @@ class EnviroLink_AI_Aggregator {
                 });
             });
 
-            // Fix Headlines button
+            // Fix Headlines button with batch processing
             $('#fix-headlines-btn').click(function() {
-                if (!confirm('This will fix capitalization on ALL existing headlines using AI.\n\nEstimated cost: ~$0.002 per headline\n(e.g., 500 posts ≈ $1.00)\n\nThe process will:\n1. Check each headline\n2. Fix proper nouns, acronyms, and geographic names\n3. Skip headlines that are already correct\n\nThis may take several minutes for large numbers of posts.\n\nContinue?')) {
+                if (!confirm('This will fix capitalization on ALL existing headlines.\n\nProcesses in batches of 50 posts (prevents timeouts).\n\nOptimizations:\n- Only calls AI for headlines that need fixing\n- Skips headlines already correct\n- Dictionary auto-fixes 200+ known terms\n\nEstimated cost: ~$0.002 per headline that needs AI review\n\nContinue?')) {
                     return;
                 }
 
@@ -1824,26 +1824,55 @@ class EnviroLink_AI_Aggregator {
                 status.html('');
                 startProgressPolling();
 
-                $.ajax({
-                    url: ajaxurl,
-                    type: 'POST',
-                    data: { action: 'envirolink_fix_headlines' },
-                    timeout: 600000, // 10 minutes timeout for large batches
-                    success: function(response) {
-                        stopProgressPolling();
-                        if (response.success) {
-                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
-                        } else {
-                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                // Recursive function to process batches
+                function processBatch(offset) {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'envirolink_fix_headlines',
+                            offset: offset
+                        },
+                        timeout: 120000, // 2 minutes per batch
+                        success: function(response) {
+                            if (response.success) {
+                                var data = response.data;
+
+                                if (data.complete) {
+                                    // All done!
+                                    stopProgressPolling();
+                                    status.html('<span style="color: green;">✓ ' + data.message + '</span>');
+                                    btn.prop('disabled', false);
+                                } else {
+                                    // More batches to process
+                                    var progressMsg = 'Processed ' + data.processed + ' of ' + data.total + ' posts... ';
+                                    progressMsg += 'Fixed: ' + data.fixed + ', Skipped: ' + data.skipped;
+                                    if (data.errors > 0) {
+                                        progressMsg += ', Errors: ' + data.errors;
+                                    }
+                                    status.html('<span style="color: blue;">' + progressMsg + '</span>');
+
+                                    // Process next batch
+                                    setTimeout(function() {
+                                        processBatch(data.next_offset);
+                                    }, 500); // Small delay between batches
+                                }
+                            } else {
+                                stopProgressPolling();
+                                status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                                btn.prop('disabled', false);
+                            }
+                        },
+                        error: function() {
+                            stopProgressPolling();
+                            status.html('<span style="color: red;">✗ Batch error at offset ' + offset + '. Try clicking Fix Headlines again to resume.</span>');
+                            btn.prop('disabled', false);
                         }
-                        btn.prop('disabled', false);
-                    },
-                    error: function() {
-                        stopProgressPolling();
-                        status.html('<span style="color: red;">✗ Error occurred (timeout or server error)</span>');
-                        btn.prop('disabled', false);
-                    }
-                });
+                    });
+                }
+
+                // Start processing from offset 0
+                processBatch(0);
             });
 
             // Generate Roundup Now button
@@ -2342,7 +2371,7 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
-     * AJAX: Fix headline capitalization using AI
+     * AJAX: Fix headline capitalization using AI (with batch processing)
      */
     public function ajax_fix_headlines() {
         if (!current_user_can('manage_options')) {
@@ -2351,10 +2380,14 @@ class EnviroLink_AI_Aggregator {
         }
 
         try {
-            $result = $this->fix_headline_capitalization();
+            $batch_size = 50; // Process 50 posts per request
+            $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+
+            $result = $this->fix_headline_capitalization($batch_size, $offset);
 
             if ($result['success']) {
-                wp_send_json_success(array('message' => $result['message']));
+                // Return full batch info for JavaScript to handle
+                wp_send_json_success($result);
             } else {
                 wp_send_json_error(array('message' => $result['message']));
             }
@@ -3721,86 +3754,146 @@ class EnviroLink_AI_Aggregator {
     /**
      * Fix headline capitalization for all existing posts using lightweight AI call
      * Only sends headline to AI, not full content - ~10x cheaper than full rewrite
+     * Supports batch processing to avoid timeouts
+     *
+     * @param int $batch_size Number of posts to process per batch (default: 50)
+     * @param int $offset Starting position for this batch (default: 0)
      */
-    private function fix_headline_capitalization() {
+    private function fix_headline_capitalization($batch_size = 50, $offset = 0) {
         $api_key = get_option('envirolink_api_key', '');
         if (empty($api_key)) {
             return array('success' => false, 'message' => 'API key not configured');
         }
 
-        $this->log_message('Starting headline capitalization fix...');
+        // Get or initialize batch state
+        $batch_state_key = 'envirolink_headline_fix_state';
+        $batch_state = get_transient($batch_state_key);
 
-        // Get all EnviroLink posts (newsfeed articles)
-        $newsfeed_args = array(
-            'post_type' => 'post',
-            'posts_per_page' => -1,
-            'meta_key' => 'envirolink_source_url',
-            'meta_compare' => 'EXISTS',
-            'post_status' => 'any'
-        );
-        $newsfeed_posts = get_posts($newsfeed_args);
+        // If starting fresh (offset = 0 and no state), get all post IDs
+        if ($offset === 0 && !$batch_state) {
+            $this->log_message('Starting headline capitalization fix...');
 
-        // Get daily roundups
-        $roundup_args = array(
-            'post_type' => 'post',
-            'posts_per_page' => -1,
-            'post_status' => 'any',
-            's' => 'Daily Environmental News Roundup'
-        );
-        $roundup_posts = get_posts($roundup_args);
+            // Get all EnviroLink posts (newsfeed articles)
+            $newsfeed_args = array(
+                'post_type' => 'post',
+                'posts_per_page' => -1,
+                'meta_key' => 'envirolink_source_url',
+                'meta_compare' => 'EXISTS',
+                'post_status' => 'any',
+                'fields' => 'ids' // Only get IDs for efficiency
+            );
+            $newsfeed_post_ids = get_posts($newsfeed_args);
 
-        // Combine and deduplicate
-        $all_posts = array();
-        $seen_ids = array();
-        foreach (array_merge($newsfeed_posts, $roundup_posts) as $post) {
-            if (!isset($seen_ids[$post->ID])) {
-                $all_posts[] = $post;
-                $seen_ids[$post->ID] = true;
+            // Get daily roundups
+            $roundup_args = array(
+                'post_type' => 'post',
+                'posts_per_page' => -1,
+                'post_status' => 'any',
+                's' => 'Daily Environmental News Roundup',
+                'fields' => 'ids'
+            );
+            $roundup_post_ids = get_posts($roundup_args);
+
+            // Combine and deduplicate
+            $all_post_ids = array_unique(array_merge($newsfeed_post_ids, $roundup_post_ids));
+
+            if (empty($all_post_ids)) {
+                $this->log_message('No posts found to process');
+                return array('success' => true, 'message' => 'No posts to update', 'complete' => true);
             }
+
+            // Initialize batch state
+            $batch_state = array(
+                'all_post_ids' => $all_post_ids,
+                'total_posts' => count($all_post_ids),
+                'fixed_count' => 0,
+                'skipped_count' => 0,
+                'error_count' => 0,
+                'started_at' => time()
+            );
+            set_transient($batch_state_key, $batch_state, 3600); // 1 hour expiry
+
+            $total_posts = $batch_state['total_posts'];
+            $estimated_cost = $total_posts * 0.002;
+            $this->log_message("Found {$total_posts} posts to check");
+            $this->log_message("Estimated API cost: ~$" . number_format($estimated_cost, 2));
+            $this->log_message("Processing in batches of {$batch_size} posts...");
+        } elseif ($batch_state) {
+            // Resume from saved state
+            $this->log_message("Resuming from offset {$offset}...");
+        } else {
+            return array('success' => false, 'message' => 'Batch state lost. Please restart.');
         }
 
-        $total_posts = count($all_posts);
+        $total_posts = $batch_state['total_posts'];
+        $all_post_ids = $batch_state['all_post_ids'];
 
-        if ($total_posts == 0) {
-            $this->log_message('No posts found to process');
-            return array('success' => true, 'message' => 'No posts to update');
+        // Get batch of post IDs to process
+        $batch_post_ids = array_slice($all_post_ids, $offset, $batch_size);
+
+        if (empty($batch_post_ids)) {
+            // Batch complete
+            $actual_cost = ($batch_state['fixed_count'] + $batch_state['skipped_count'] + $batch_state['error_count']) * 0.002;
+            $message = "Fixed {$batch_state['fixed_count']} headlines";
+            if ($batch_state['skipped_count'] > 0) $message .= ", {$batch_state['skipped_count']} already correct";
+            if ($batch_state['error_count'] > 0) $message .= ", {$batch_state['error_count']} errors";
+            $message .= " (est. cost: ~$" . number_format($actual_cost, 2) . ")";
+
+            $this->log_message('Complete: ' . $message);
+            delete_transient($batch_state_key); // Clean up
+
+            return array(
+                'success' => true,
+                'message' => $message,
+                'complete' => true
+            );
         }
 
-        $this->log_message("Found {$total_posts} posts to check");
+        // Get full post objects for this batch
+        $batch_posts = get_posts(array(
+            'post_type' => 'post',
+            'post__in' => $batch_post_ids,
+            'posts_per_page' => $batch_size,
+            'post_status' => 'any'
+        ));
 
-        // Estimate cost
-        $estimated_cost = $total_posts * 0.002; // ~$0.002 per headline
-        $this->log_message("Estimated API cost: ~$" . number_format($estimated_cost, 2));
-
-        $fixed_count = 0;
-        $skipped_count = 0;
-        $error_count = 0;
-
-        foreach ($all_posts as $index => $post) {
-            $progress_percent = floor((($index + 1) / $total_posts) * 100);
+        // Process this batch
+        foreach ($batch_posts as $post) {
+            $current_index = $offset + array_search($post->ID, $batch_post_ids) + 1;
+            $progress_percent = floor(($current_index / $total_posts) * 100);
             $this->update_progress(array(
                 'percent' => $progress_percent,
-                'current' => $index + 1,
+                'current' => $current_index,
                 'total' => $total_posts,
                 'status' => 'Fixing headlines...'
             ));
 
             $current_title = $post->post_title;
-            $this->log_message("Processing: {$current_title}");
+            $this->log_message("Processing [{$current_index}/{$total_posts}]: {$current_title}");
 
-            // Call lightweight AI to fix capitalization
-            $fixed_title = $this->fix_single_headline_with_ai($current_title, $api_key);
+            // First, try dictionary-only fix (fast, no API call)
+            $dictionary_fixed = $this->force_capitalize_known_terms($current_title);
 
-            if ($fixed_title === false) {
-                $this->log_message("  → ✗ API error, skipping");
-                $error_count++;
+            // If dictionary didn't change anything, skip AI call
+            if ($dictionary_fixed === $current_title) {
+                $this->log_message("  → Already correct (dictionary check)");
+                $batch_state['skipped_count']++;
                 continue;
             }
 
-            // Check if title actually changed
+            // Dictionary made changes - now verify with AI to ensure full correctness
+            $fixed_title = $this->fix_single_headline_with_ai($dictionary_fixed, $api_key);
+
+            if ($fixed_title === false) {
+                // AI failed, but we have dictionary fix - use that
+                $this->log_message("  → ⚠ API error, using dictionary fix only");
+                $fixed_title = $dictionary_fixed;
+            }
+
+            // Check if title actually changed from original
             if ($fixed_title === $current_title) {
                 $this->log_message("  → Already correct");
-                $skipped_count++;
+                $batch_state['skipped_count']++;
                 continue;
             }
 
@@ -3812,27 +3905,35 @@ class EnviroLink_AI_Aggregator {
 
             if (is_wp_error($result)) {
                 $this->log_message("  → ✗ Error: " . $result->get_error_message());
-                $error_count++;
+                $batch_state['error_count']++;
             } else {
                 $this->log_message("  → ✓ Fixed: {$fixed_title}");
-                $fixed_count++;
+                $batch_state['fixed_count']++;
             }
 
             // Small delay to avoid rate limiting
             usleep(100000); // 100ms
         }
 
-        $actual_cost = ($fixed_count + $skipped_count + $error_count) * 0.002;
-        $message = "Fixed {$fixed_count} headlines";
-        if ($skipped_count > 0) $message .= ", {$skipped_count} already correct";
-        if ($error_count > 0) $message .= ", {$error_count} errors";
-        $message .= " (est. cost: ~$" . number_format($actual_cost, 2) . ")";
+        // Update batch state
+        set_transient($batch_state_key, $batch_state, 3600);
 
-        $this->log_message('Complete: ' . $message);
+        $next_offset = $offset + $batch_size;
+        $remaining = $total_posts - $next_offset;
+        $remaining = $remaining > 0 ? $remaining : 0;
+
+        $this->log_message("Batch complete. {$remaining} posts remaining.");
 
         return array(
             'success' => true,
-            'message' => $message
+            'complete' => false,
+            'next_offset' => $next_offset,
+            'total' => $total_posts,
+            'processed' => $next_offset,
+            'remaining' => $remaining,
+            'fixed' => $batch_state['fixed_count'],
+            'skipped' => $batch_state['skipped_count'],
+            'errors' => $batch_state['error_count']
         );
     }
 
