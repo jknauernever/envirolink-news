@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.48.0
+ * Version: 1.49.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.48.0');
+define('ENVIROLINK_VERSION', '1.49.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3841,16 +3841,23 @@ class EnviroLink_AI_Aggregator {
      * Returns fixed headline or false on error
      */
     private function fix_single_headline_with_ai($headline, $api_key) {
-        $prompt = "Fix the capitalization of this news headline following AP/journalistic style rules:
+        $prompt = "Fix the capitalization of this news headline using Title Case:
 
 HEADLINE: {$headline}
 
-Capitalization rules:
-- Capitalize ALL proper nouns (names of people, places, organizations, rivers, mountains)
-- Capitalize ALL acronyms (EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.)
-- Capitalize ALL geographic locations (Amazon, Arctic, Pacific, Everglades, Great Barrier Reef)
-- Capitalize first word and all major words (nouns, verbs, adjectives, adverbs)
-- Lowercase articles (a, an, the), conjunctions (and, but, or), and short prepositions (in, on, at, to, for, of) UNLESS they are the first word
+Capitalization rules for Title Case:
+- Capitalize EVERY word EXCEPT: articles (a, an, the), conjunctions (and, but, or, nor, yet, so), and short prepositions (in, on, at, to, for, of, by, with, from)
+- ALWAYS capitalize proper nouns (names of people, places, organizations, rivers, mountains)
+- ALWAYS capitalize ALL acronyms and initialisms (EPA, NOAA, NASA, UN, EU, UK, US, COP, IPCC, WHO, WWF, PFAS, etc.)
+- ALWAYS capitalize multi-word geographic names (New Mexico, South Africa, Great Barrier Reef, North Carolina, etc.)
+- ALWAYS capitalize the first and last word of the headline, even if normally lowercase
+- When in doubt whether something is a proper noun, capitalize it
+
+Examples:
+- \"new mexico faces water crisis\" → \"New Mexico Faces Water Crisis\"
+- \"noaa reports record temperatures\" → \"NOAA Reports Record Temperatures\"
+- \"south africa plans green energy\" → \"South Africa Plans Green Energy\"
+- \"study finds amazon rainforest at risk\" → \"Study Finds Amazon Rainforest at Risk\"
 
 Return ONLY the corrected headline, nothing else. If the headline is already correct, return it exactly as-is.";
 
@@ -3883,7 +3890,138 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             return false;
         }
 
-        return trim($body['content'][0]['text']);
+        $ai_headline = trim($body['content'][0]['text']);
+
+        // Apply post-processing to force-capitalize known terms
+        $final_headline = $this->force_capitalize_known_terms($ai_headline);
+
+        return $final_headline;
+    }
+
+    /**
+     * Force-capitalize known proper nouns, acronyms, and geographic names
+     * Post-processing safety net to catch terms AI might have missed
+     */
+    private function force_capitalize_known_terms($headline) {
+        // Comprehensive dictionary of terms that MUST be capitalized
+        $capitalization_map = array(
+            // US States (full names)
+            'alabama' => 'Alabama', 'alaska' => 'Alaska', 'arizona' => 'Arizona',
+            'arkansas' => 'Arkansas', 'california' => 'California', 'colorado' => 'Colorado',
+            'connecticut' => 'Connecticut', 'delaware' => 'Delaware', 'florida' => 'Florida',
+            'georgia' => 'Georgia', 'hawaii' => 'Hawaii', 'idaho' => 'Idaho',
+            'illinois' => 'Illinois', 'indiana' => 'Indiana', 'iowa' => 'Iowa',
+            'kansas' => 'Kansas', 'kentucky' => 'Kentucky', 'louisiana' => 'Louisiana',
+            'maine' => 'Maine', 'maryland' => 'Maryland', 'massachusetts' => 'Massachusetts',
+            'michigan' => 'Michigan', 'minnesota' => 'Minnesota', 'mississippi' => 'Mississippi',
+            'missouri' => 'Missouri', 'montana' => 'Montana', 'nebraska' => 'Nebraska',
+            'nevada' => 'Nevada', 'new hampshire' => 'New Hampshire', 'new jersey' => 'New Jersey',
+            'new mexico' => 'New Mexico', 'new york' => 'New York', 'north carolina' => 'North Carolina',
+            'north dakota' => 'North Dakota', 'ohio' => 'Ohio', 'oklahoma' => 'Oklahoma',
+            'oregon' => 'Oregon', 'pennsylvania' => 'Pennsylvania', 'rhode island' => 'Rhode Island',
+            'south carolina' => 'South Carolina', 'south dakota' => 'South Dakota', 'tennessee' => 'Tennessee',
+            'texas' => 'Texas', 'utah' => 'Utah', 'vermont' => 'Vermont',
+            'virginia' => 'Virginia', 'washington' => 'Washington', 'west virginia' => 'West Virginia',
+            'wisconsin' => 'Wisconsin', 'wyoming' => 'Wyoming',
+
+            // US Federal Agencies
+            'epa' => 'EPA', 'noaa' => 'NOAA', 'nasa' => 'NASA', 'usda' => 'USDA',
+            'doi' => 'DOI', 'blm' => 'BLM', 'usfs' => 'USFS', 'fws' => 'FWS',
+            'fema' => 'FEMA', 'usgs' => 'USGS', 'nps' => 'NPS', 'nih' => 'NIH',
+            'cdc' => 'CDC', 'fda' => 'FDA', 'osha' => 'OSHA', 'nrc' => 'NRC',
+            'ferc' => 'FERC', 'doe' => 'DOE', 'dot' => 'DOT', 'faa' => 'FAA',
+            'nhtsa' => 'NHTSA', 'ntsb' => 'NTSB', 'uscg' => 'USCG',
+
+            // United Nations Entities
+            'un' => 'UN', 'unep' => 'UNEP', 'ipcc' => 'IPCC', 'unesco' => 'UNESCO',
+            'undp' => 'UNDP', 'who' => 'WHO', 'fao' => 'FAO', 'wfp' => 'WFP',
+            'unhcr' => 'UNHCR', 'unicef' => 'UNICEF', 'unfccc' => 'UNFCCC',
+            'unece' => 'UNECE', 'unescap' => 'UNESCAP', 'unido' => 'UNIDO',
+
+            // International Organizations
+            'eu' => 'EU', 'nato' => 'NATO', 'oecd' => 'OECD', 'wto' => 'WTO',
+            'imf' => 'IMF', 'wwf' => 'WWF', 'iucn' => 'IUCN', 'greenpeace' => 'Greenpeace',
+
+            // Countries (selection of most common in environmental news)
+            'afghanistan' => 'Afghanistan', 'argentina' => 'Argentina', 'australia' => 'Australia',
+            'austria' => 'Austria', 'bangladesh' => 'Bangladesh', 'belgium' => 'Belgium',
+            'bolivia' => 'Bolivia', 'brazil' => 'Brazil', 'canada' => 'Canada',
+            'chile' => 'Chile', 'china' => 'China', 'colombia' => 'Colombia',
+            'costa rica' => 'Costa Rica', 'denmark' => 'Denmark', 'ecuador' => 'Ecuador',
+            'egypt' => 'Egypt', 'ethiopia' => 'Ethiopia', 'finland' => 'Finland',
+            'france' => 'France', 'germany' => 'Germany', 'ghana' => 'Ghana',
+            'greece' => 'Greece', 'guatemala' => 'Guatemala', 'honduras' => 'Honduras',
+            'iceland' => 'Iceland', 'india' => 'India', 'indonesia' => 'Indonesia',
+            'iran' => 'Iran', 'iraq' => 'Iraq', 'ireland' => 'Ireland',
+            'israel' => 'Israel', 'italy' => 'Italy', 'jamaica' => 'Jamaica',
+            'japan' => 'Japan', 'kenya' => 'Kenya', 'madagascar' => 'Madagascar',
+            'malaysia' => 'Malaysia', 'mexico' => 'Mexico', 'morocco' => 'Morocco',
+            'mozambique' => 'Mozambique', 'nepal' => 'Nepal', 'netherlands' => 'Netherlands',
+            'new zealand' => 'New Zealand', 'nigeria' => 'Nigeria', 'norway' => 'Norway',
+            'pakistan' => 'Pakistan', 'panama' => 'Panama', 'peru' => 'Peru',
+            'philippines' => 'Philippines', 'poland' => 'Poland', 'portugal' => 'Portugal',
+            'russia' => 'Russia', 'saudi arabia' => 'Saudi Arabia', 'singapore' => 'Singapore',
+            'south africa' => 'South Africa', 'south korea' => 'South Korea', 'spain' => 'Spain',
+            'sri lanka' => 'Sri Lanka', 'sweden' => 'Sweden', 'switzerland' => 'Switzerland',
+            'tanzania' => 'Tanzania', 'thailand' => 'Thailand', 'turkey' => 'Turkey',
+            'uganda' => 'Uganda', 'ukraine' => 'Ukraine', 'united kingdom' => 'United Kingdom',
+            'united states' => 'United States', 'uruguay' => 'Uruguay', 'venezuela' => 'Venezuela',
+            'vietnam' => 'Vietnam', 'zimbabwe' => 'Zimbabwe',
+
+            // UK Countries
+            'england' => 'England', 'scotland' => 'Scotland', 'wales' => 'Wales',
+            'northern ireland' => 'Northern Ireland',
+
+            // Common Acronyms/Abbreviations
+            'uk' => 'UK', 'us' => 'US', 'usa' => 'USA', 'uae' => 'UAE',
+            'cop' => 'COP', 'cop28' => 'COP28', 'cop29' => 'COP29', 'cop30' => 'COP30',
+            'pfas' => 'PFAS', 'ddt' => 'DDT', 'pcb' => 'PCB', 'voc' => 'VOC',
+            'pm2.5' => 'PM2.5', 'co2' => 'CO2', 'ch4' => 'CH4', 'n2o' => 'N2O',
+
+            // Geographic Features
+            'amazon' => 'Amazon', 'amazon rainforest' => 'Amazon Rainforest',
+            'arctic' => 'Arctic', 'antarctic' => 'Antarctic', 'antarctica' => 'Antarctica',
+            'atlantic' => 'Atlantic', 'pacific' => 'Pacific', 'indian ocean' => 'Indian Ocean',
+            'mediterranean' => 'Mediterranean', 'caribbean' => 'Caribbean',
+            'everglades' => 'Everglades', 'great barrier reef' => 'Great Barrier Reef',
+            'great lakes' => 'Great Lakes', 'gulf of mexico' => 'Gulf of Mexico',
+            'mississippi river' => 'Mississippi River', 'colorado river' => 'Colorado River',
+            'yellowstone' => 'Yellowstone', 'yosemite' => 'Yosemite',
+            'sahara' => 'Sahara', 'sahara desert' => 'Sahara Desert',
+            'himalayas' => 'Himalayas', 'andes' => 'Andes', 'rockies' => 'Rockies',
+            'rocky mountains' => 'Rocky Mountains', 'appalachian' => 'Appalachian',
+            'congo' => 'Congo', 'congo basin' => 'Congo Basin',
+            'borneo' => 'Borneo', 'sumatra' => 'Sumatra',
+            'galapagos' => 'Galapagos', 'galapagos islands' => 'Galapagos Islands',
+
+            // Regions/Continents
+            'africa' => 'Africa', 'asia' => 'Asia', 'europe' => 'Europe',
+            'north america' => 'North America', 'south america' => 'South America',
+            'central america' => 'Central America', 'latin america' => 'Latin America',
+            'middle east' => 'Middle East', 'southeast asia' => 'Southeast Asia',
+
+            // Environmental Terms (proper nouns)
+            'paris agreement' => 'Paris Agreement', 'kyoto protocol' => 'Kyoto Protocol',
+            'clean air act' => 'Clean Air Act', 'clean water act' => 'Clean Water Act',
+            'endangered species act' => 'Endangered Species Act',
+            'green new deal' => 'Green New Deal',
+            'earth day' => 'Earth Day', 'el niño' => 'El Niño', 'la niña' => 'La Niña',
+        );
+
+        // Sort by length (longest first) to handle multi-word terms before single words
+        uksort($capitalization_map, function($a, $b) {
+            return strlen($b) - strlen($a);
+        });
+
+        // Perform case-insensitive replacements
+        // Use word boundaries to avoid partial matches
+        foreach ($capitalization_map as $lowercase => $proper) {
+            // Match whole words/phrases with word boundaries
+            $pattern = '/\b' . preg_quote($lowercase, '/') . '\b/i';
+            $headline = preg_replace($pattern, $proper, $headline);
+        }
+
+        return $headline;
     }
 
     /**
@@ -5283,13 +5421,18 @@ Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
 
-Headline capitalization rules (IMPORTANT):
-- Use standard AP/journalistic headline case
+Headline capitalization rules (use Title Case):
+- Capitalize EVERY word EXCEPT: articles (a, an, the), conjunctions (and, but, or, nor, yet, so), and short prepositions (in, on, at, to, for, of, by, with, from)
 - ALWAYS capitalize proper nouns: names of people, places, organizations, rivers, mountains, etc.
-- ALWAYS capitalize acronyms: EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.
-- ALWAYS capitalize geographic locations: Amazon, Arctic, Pacific, Everglades, Great Barrier Reef, etc.
-- Capitalize first word and all major words (nouns, verbs, adjectives, adverbs)
-- Lowercase articles (a, an, the), conjunctions (and, but, or), and short prepositions (in, on, at, to) unless first word
+- ALWAYS capitalize ALL acronyms and initialisms: EPA, NOAA, NASA, UN, EU, UK, US, COP, IPCC, WHO, WWF, PFAS, etc.
+- ALWAYS capitalize multi-word geographic names: New Mexico, South Africa, Great Barrier Reef, North Carolina, etc.
+- ALWAYS capitalize the first and last word of the headline
+- When in doubt whether something is a proper noun, capitalize it
+
+Examples:
+- \"new mexico faces water crisis\" → \"New Mexico Faces Water Crisis\"
+- \"noaa reports record temperatures\" → \"NOAA Reports Record Temperatures\"
+- \"south africa plans green energy\" → \"South Africa Plans Green Energy\"
 
 Keep the core facts and maintain journalistic integrity. Make it informative and accessible to a general audience interested in environmental issues.
 
@@ -5331,13 +5474,18 @@ CONTENT: [rewritten content]";
         // Parse response
         if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/s', $text, $title_match) &&
             preg_match('/CONTENT:\s*(.+)$/s', $text, $content_match)) {
-            
+
+            $ai_title = trim($title_match[1]);
+
+            // Apply post-processing to force-capitalize known terms
+            $final_title = $this->force_capitalize_known_terms($ai_title);
+
             return array(
-                'title' => trim($title_match[1]),
+                'title' => $final_title,
                 'content' => trim($content_match[1])
             );
         }
-        
+
         return false;
     }
 
@@ -5946,15 +6094,17 @@ Editorial requirements:
 - No clickbait, no vague \"environmental news roundup\" as the only hook
 
 Style notes:
-- US headline case; no smart quotes; no emojis
+- Title Case (not sentence case); no smart quotes; no emojis
 - Prefer concrete problem words: fires, floods, drilling, plastic, oil spill, toxic, wildfire, smoke, emissions, heatwave, drought, bleaching
 - Connect stories with: comma + conjunction, semicolons, or \"while/as\" for contrast
 
-Capitalization rules (CRITICAL):
+Capitalization rules (use Title Case - CRITICAL):
+- Capitalize EVERY word EXCEPT: articles (a, an, the), conjunctions (and, but, or, nor, yet, so), and short prepositions (in, on, at, to, for, of, by, with, from)
 - ALWAYS capitalize proper nouns: names of people, places, organizations
-- ALWAYS capitalize acronyms: EPA, NOAA, UN, EU, UK, US, COP, IPCC, NASA, WHO, WWF, PFAS, etc.
-- ALWAYS capitalize geographic locations: Amazon, Arctic, Pacific, Everglades, Great Barrier Reef, etc.
-- Capitalize first word and all major words; lowercase articles/conjunctions/short prepositions unless first word
+- ALWAYS capitalize ALL acronyms and initialisms: EPA, NOAA, NASA, UN, EU, UK, US, COP, IPCC, WHO, WWF, PFAS, etc.
+- ALWAYS capitalize multi-word geographic names: New Mexico, South Africa, Great Barrier Reef, North Carolina, etc.
+- ALWAYS capitalize the first and last word of the headline
+- When in doubt whether something is a proper noun, capitalize it
 
 Safety & accuracy:
 - Don't overstate (\"millions\" → only if clearly indicated in the story)
@@ -6023,6 +6173,9 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             error_log('EnviroLink: AI metadata JSON parsing failed. Response: ' . $text);
             return false;
         }
+
+        // Apply post-processing to force-capitalize known terms in headline
+        $metadata['headline'] = $this->force_capitalize_known_terms($metadata['headline']);
 
         // No character limit - user wants full date always displayed
         // Log headline length for monitoring purposes only
