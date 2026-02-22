@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.51.0
+ * Version: 1.52.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.51.0');
+define('ENVIROLINK_VERSION', '1.52.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -80,6 +80,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
         add_action('wp_ajax_envirolink_fix_headlines', array($this, 'ajax_fix_headlines'));
         add_action('wp_ajax_envirolink_fix_seo_meta', array($this, 'ajax_fix_seo_meta'));
+        add_action('wp_ajax_envirolink_strip_attribution', array($this, 'ajax_strip_attribution'));
 
         // Ontology management AJAX handlers
         add_action('wp_ajax_envirolink_seed_ontology', array($this, 'ajax_seed_ontology'));
@@ -554,6 +555,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="fix-seo-meta-btn" title="Set AIOSEO metadata (SEO title, meta description, Open Graph) on all existing posts (no API cost)" style="background: #1abc9c; border-color: #16a085; color: white;">
                                 <span class="dashicons dashicons-search" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Fix SEO Meta
+                            </button>
+                            <button type="button" class="button" id="strip-attribution-btn" title="Remove 'This article was written by...' attribution lines from all existing posts" style="background: #e74c3c; border-color: #c0392b; color: white;">
+                                <span class="dashicons dashicons-editor-strikethrough" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Strip Attribution
                             </button>
                         </div>
 
@@ -1939,6 +1944,65 @@ class EnviroLink_AI_Aggregator {
                 processBatch(0);
             });
 
+            // Strip Attribution button with batch processing
+            $('#strip-attribution-btn').click(function() {
+                if (!confirm('This will remove attribution lines from ALL existing posts.\n\nRemoves text like:\n- "This article was written by the EnviroLink Editors as a summary of..."\n- "This is a summary of an article from..."\n- "Originally published by/in..."\n- "Source: ..."\n\nProcesses in batches of 50 posts.\nNo API calls needed (free and fast).\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                function processBatch(offset) {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'envirolink_strip_attribution',
+                            offset: offset
+                        },
+                        timeout: 120000,
+                        success: function(response) {
+                            if (response.success) {
+                                var data = response.data;
+
+                                if (data.complete) {
+                                    stopProgressPolling();
+                                    status.html('<span style="color: green;">✓ ' + data.message + '</span>');
+                                    btn.prop('disabled', false);
+                                } else {
+                                    var progressMsg = 'Processed ' + data.processed + ' of ' + data.total + ' posts... ';
+                                    progressMsg += 'Stripped: ' + data.fixed + ', Clean: ' + data.skipped;
+                                    if (data.errors > 0) {
+                                        progressMsg += ', Errors: ' + data.errors;
+                                    }
+                                    status.html('<span style="color: blue;">' + progressMsg + '</span>');
+
+                                    setTimeout(function() {
+                                        processBatch(data.next_offset);
+                                    }, 500);
+                                }
+                            } else {
+                                stopProgressPolling();
+                                status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                                btn.prop('disabled', false);
+                            }
+                        },
+                        error: function() {
+                            stopProgressPolling();
+                            status.html('<span style="color: red;">✗ Batch error at offset ' + offset + '. Try clicking Strip Attribution again to resume.</span>');
+                            btn.prop('disabled', false);
+                        }
+                    });
+                }
+
+                processBatch(0);
+            });
+
             // Generate Roundup Now button
             $('#generate-roundup-btn').click(function() {
                 if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
@@ -2477,6 +2541,33 @@ class EnviroLink_AI_Aggregator {
             $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
 
             $result = $this->fix_seo_meta($batch_size, $offset);
+
+            if ($result['success']) {
+                wp_send_json_success($result);
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Strip attribution lines from all existing posts
+     */
+    public function ajax_strip_attribution() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $batch_size = 50;
+            $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+
+            $result = $this->strip_attribution($batch_size, $offset);
 
             if ($result['success']) {
                 wp_send_json_success($result);
@@ -4129,6 +4220,165 @@ class EnviroLink_AI_Aggregator {
 
             $this->log_message("  → ✓ Set SEO meta: title (" . strlen($seo_title) . " chars), description (" . strlen($meta_description) . " chars)");
             $batch_state['fixed_count']++;
+        }
+
+        set_transient($batch_state_key, $batch_state, 3600);
+
+        $next_offset = $offset + $batch_size;
+        $remaining = $total_posts - $next_offset;
+        $remaining = $remaining > 0 ? $remaining : 0;
+
+        $this->log_message("Batch complete. {$remaining} posts remaining.");
+
+        return array(
+            'success' => true,
+            'complete' => false,
+            'next_offset' => $next_offset,
+            'total' => $total_posts,
+            'processed' => $next_offset,
+            'remaining' => $remaining,
+            'fixed' => $batch_state['fixed_count'],
+            'skipped' => $batch_state['skipped_count'],
+            'errors' => $batch_state['error_count']
+        );
+    }
+
+    /**
+     * Strip attribution lines from all existing EnviroLink posts
+     * Removes "This article was written by..." and similar AI-generated attribution text
+     * @param int $batch_size Number of posts per batch
+     * @param int $offset Starting position in post ID list
+     * @return array Result with batch progress info
+     */
+    private function strip_attribution($batch_size = 50, $offset = 0) {
+        $batch_state_key = 'envirolink_strip_attribution_state';
+        $batch_state = get_transient($batch_state_key);
+
+        if ($offset === 0 && !$batch_state) {
+            $this->log_message('Starting attribution stripping...');
+
+            $newsfeed_args = array(
+                'post_type' => 'post',
+                'posts_per_page' => -1,
+                'meta_key' => 'envirolink_source_url',
+                'meta_compare' => 'EXISTS',
+                'post_status' => 'any',
+                'fields' => 'ids'
+            );
+            $all_post_ids = get_posts($newsfeed_args);
+
+            if (empty($all_post_ids)) {
+                $this->log_message('No posts found to process');
+                return array('success' => true, 'message' => 'No posts to update', 'complete' => true);
+            }
+
+            $batch_state = array(
+                'all_post_ids' => $all_post_ids,
+                'total_posts' => count($all_post_ids),
+                'fixed_count' => 0,
+                'skipped_count' => 0,
+                'error_count' => 0,
+                'started_at' => time()
+            );
+            set_transient($batch_state_key, $batch_state, 3600);
+
+            $total_posts = $batch_state['total_posts'];
+            $this->log_message("Found {$total_posts} posts to check");
+            $this->log_message("Processing in batches of {$batch_size} posts...");
+        } elseif ($batch_state) {
+            $this->log_message("Resuming from offset {$offset}...");
+        } else {
+            return array('success' => false, 'message' => 'Batch state lost. Please restart.');
+        }
+
+        $total_posts = $batch_state['total_posts'];
+        $all_post_ids = $batch_state['all_post_ids'];
+
+        $batch_post_ids = array_slice($all_post_ids, $offset, $batch_size);
+
+        if (empty($batch_post_ids)) {
+            $message = "Stripped attribution from {$batch_state['fixed_count']} posts";
+            if ($batch_state['skipped_count'] > 0) $message .= ", {$batch_state['skipped_count']} had no attribution";
+            if ($batch_state['error_count'] > 0) $message .= ", {$batch_state['error_count']} errors";
+
+            $this->log_message('Complete: ' . $message);
+            delete_transient($batch_state_key);
+
+            return array(
+                'success' => true,
+                'message' => $message,
+                'complete' => true
+            );
+        }
+
+        $batch_posts = get_posts(array(
+            'post_type' => 'post',
+            'post__in' => $batch_post_ids,
+            'posts_per_page' => $batch_size,
+            'post_status' => 'any'
+        ));
+
+        // Patterns to match attribution lines (with optional surrounding HTML tags)
+        $patterns = array(
+            // "This article was written by..." variations
+            '/<p>\s*<em>\s*This article was written by.+?<\/em>\s*<\/p>/is',
+            '/<p>\s*This article was written by.+?<\/p>/is',
+            '/<em>\s*This article was written by.+?<\/em>/is',
+            // "This is a summary of..." variations
+            '/<p>\s*<em>\s*This is a summary of.+?<\/em>\s*<\/p>/is',
+            '/<p>\s*This is a summary of.+?<\/p>/is',
+            '/<em>\s*This is a summary of.+?<\/em>/is',
+            // "This article is a summary of..." variations
+            '/<p>\s*<em>\s*This article is a summary of.+?<\/em>\s*<\/p>/is',
+            '/<p>\s*This article is a summary of.+?<\/p>/is',
+            // "Originally published by/in/at..." variations
+            '/<p>\s*<em>\s*Originally published (?:by|in|at|on).+?<\/em>\s*<\/p>/is',
+            '/<p>\s*Originally published (?:by|in|at|on).+?<\/p>/is',
+            // "Source:" attribution
+            '/<p>\s*<em>\s*Source:.+?<\/em>\s*<\/p>/is',
+            '/<p>\s*Source:.+?<\/p>/is',
+        );
+
+        foreach ($batch_posts as $post) {
+            $current_index = $offset + array_search($post->ID, $batch_post_ids) + 1;
+            $progress_percent = floor(($current_index / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $current_index,
+                'total' => $total_posts,
+                'status' => 'Stripping attribution...'
+            ));
+
+            $content = $post->post_content;
+            $original_content = $content;
+
+            foreach ($patterns as $pattern) {
+                $content = preg_replace($pattern, '', $content);
+            }
+
+            // Trim trailing whitespace/newlines left after removal
+            $content = rtrim($content);
+
+            if ($content === $original_content) {
+                $batch_state['skipped_count']++;
+                continue;
+            }
+
+            $this->log_message("Processing [{$current_index}/{$total_posts}]: {$post->post_title}");
+
+            $result = wp_update_post(array(
+                'ID' => $post->ID,
+                'post_content' => $content
+            ), true);
+
+            if (is_wp_error($result)) {
+                $this->log_message("  → ✗ Error: " . $result->get_error_message());
+                $batch_state['error_count']++;
+            } else {
+                $removed = strlen($original_content) - strlen($content);
+                $this->log_message("  → ✓ Stripped attribution ({$removed} chars removed)");
+                $batch_state['fixed_count']++;
+            }
         }
 
         set_transient($batch_state_key, $batch_state, 3600);
@@ -5889,6 +6139,8 @@ Examples:
 - \"south africa plans green energy\" → \"South Africa Plans Green Energy\"
 
 Keep the core facts and maintain journalistic integrity. Make it informative and accessible to a general audience interested in environmental issues.
+
+IMPORTANT: Do NOT include any attribution, source credit, or byline statements in the content. Do NOT add lines like \"This article was written by...\" or \"This is a summary of an article from...\" or any similar attribution. The article should read as original editorial content with no reference to its source.
 
 Format your response as:
 TITLE: [new headline]
