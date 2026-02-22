@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.0
+ * Version: 1.52.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.0');
+define('ENVIROLINK_VERSION', '1.52.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4318,25 +4318,55 @@ class EnviroLink_AI_Aggregator {
             'post_status' => 'any'
         ));
 
-        // Patterns to match attribution lines (with optional surrounding HTML tags)
+        // On first batch, log samples of posts containing attribution text so we can verify patterns
+        if ($offset === 0) {
+            $sample_count = 0;
+            foreach ($batch_posts as $post) {
+                if ($sample_count >= 3) break;
+                if (stripos($post->post_content, 'written by') !== false ||
+                    stripos($post->post_content, 'summary of') !== false ||
+                    stripos($post->post_content, 'originally published') !== false) {
+                    $last_500 = substr($post->post_content, -500);
+                    $this->log_message("SAMPLE (Post #{$post->ID}): ...{$last_500}");
+                    $sample_count++;
+                }
+            }
+            if ($sample_count === 0) {
+                $this->log_message("DEBUG: No posts in first batch contain 'written by', 'summary of', or 'originally published'");
+                // Log last 300 chars of first 3 posts to see format
+                foreach (array_slice($batch_posts, 0, 3) as $post) {
+                    $last_300 = substr($post->post_content, -300);
+                    $this->log_message("SAMPLE (Post #{$post->ID}): ...{$last_300}");
+                }
+            }
+        }
+
+        // Patterns to match attribution lines in all possible formats:
+        // - Plain text (no HTML), Gutenberg blocks, classic editor HTML
+        // - With or without <p>, <em>, <strong>, <i> wrappers
+        // - With or without Gutenberg <!-- wp:paragraph --> comments
         $patterns = array(
-            // "This article was written by..." variations
-            '/<p>\s*<em>\s*This article was written by.+?<\/em>\s*<\/p>/is',
-            '/<p>\s*This article was written by.+?<\/p>/is',
-            '/<em>\s*This article was written by.+?<\/em>/is',
-            // "This is a summary of..." variations
-            '/<p>\s*<em>\s*This is a summary of.+?<\/em>\s*<\/p>/is',
-            '/<p>\s*This is a summary of.+?<\/p>/is',
-            '/<em>\s*This is a summary of.+?<\/em>/is',
-            // "This article is a summary of..." variations
-            '/<p>\s*<em>\s*This article is a summary of.+?<\/em>\s*<\/p>/is',
-            '/<p>\s*This article is a summary of.+?<\/p>/is',
-            // "Originally published by/in/at..." variations
-            '/<p>\s*<em>\s*Originally published (?:by|in|at|on).+?<\/em>\s*<\/p>/is',
-            '/<p>\s*Originally published (?:by|in|at|on).+?<\/p>/is',
-            // "Source:" attribution
-            '/<p>\s*<em>\s*Source:.+?<\/em>\s*<\/p>/is',
-            '/<p>\s*Source:.+?<\/p>/is',
+            // Gutenberg block wrapped: <!-- wp:paragraph --><p>..attribution..</p><!-- /wp:paragraph -->
+            '/<!--\s*wp:paragraph\s*-->\s*<p>\s*(?:<(?:em|i|strong)>\s*)?This article was written by.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>\s*<!--\s*\/wp:paragraph\s*-->/is',
+            '/<!--\s*wp:paragraph\s*-->\s*<p>\s*(?:<(?:em|i|strong)>\s*)?This (?:article )?is a summary of.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>\s*<!--\s*\/wp:paragraph\s*-->/is',
+            '/<!--\s*wp:paragraph\s*-->\s*<p>\s*(?:<(?:em|i|strong)>\s*)?Originally published (?:by|in|at|on).+?(?:<\/(?:em|i|strong)>\s*)?<\/p>\s*<!--\s*\/wp:paragraph\s*-->/is',
+            '/<!--\s*wp:paragraph\s*-->\s*<p>\s*(?:<(?:em|i|strong)>\s*)?Source:.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>\s*<!--\s*\/wp:paragraph\s*-->/is',
+
+            // HTML <p> wrapped (classic editor)
+            '/<p>\s*(?:<(?:em|i|strong)>\s*)?This article was written by.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>/is',
+            '/<p>\s*(?:<(?:em|i|strong)>\s*)?This (?:article )?is a summary of.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>/is',
+            '/<p>\s*(?:<(?:em|i|strong)>\s*)?Originally published (?:by|in|at|on).+?(?:<\/(?:em|i|strong)>\s*)?<\/p>/is',
+            '/<p>\s*(?:<(?:em|i|strong)>\s*)?Source:.+?(?:<\/(?:em|i|strong)>\s*)?<\/p>/is',
+
+            // Inline <em>/<i> only (no <p> wrapper)
+            '/<(?:em|i)>\s*This article was written by.+?<\/(?:em|i)>/is',
+            '/<(?:em|i)>\s*This (?:article )?is a summary of.+?<\/(?:em|i)>/is',
+
+            // Plain text (no HTML tags) — match whole line
+            '/\n*(?:^|\n)\s*This article was written by[^\n]+/im',
+            '/\n*(?:^|\n)\s*This (?:article )?is a summary of[^\n]+/im',
+            '/\n*(?:^|\n)\s*Originally published (?:by|in|at|on)[^\n]+/im',
+            '/\n*(?:^|\n)\s*Source:\s*[^\n]+/im',
         );
 
         foreach ($batch_posts as $post) {
