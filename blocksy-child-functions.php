@@ -109,12 +109,7 @@ function envirolink_single_metadata() {
 
     ?>
     <p class="envirolink-source-attribution">
-        This article was written based on the source article from
-        <?php if ($source_url): ?>
-            <a href="<?php echo esc_url($source_url); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($source_name); ?></a>
-        <?php else: ?>
-            <?php echo esc_html($source_name); ?>
-        <?php endif; ?>
+        Article written by EnviroLink News Team
     </p>
     <?php
 }

@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.1
+ * Version: 1.52.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.1');
+define('ENVIROLINK_VERSION', '1.52.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4317,29 +4317,6 @@ class EnviroLink_AI_Aggregator {
             'posts_per_page' => $batch_size,
             'post_status' => 'any'
         ));
-
-        // On first batch, log samples of posts containing attribution text so we can verify patterns
-        if ($offset === 0) {
-            $sample_count = 0;
-            foreach ($batch_posts as $post) {
-                if ($sample_count >= 3) break;
-                if (stripos($post->post_content, 'written by') !== false ||
-                    stripos($post->post_content, 'summary of') !== false ||
-                    stripos($post->post_content, 'originally published') !== false) {
-                    $last_500 = substr($post->post_content, -500);
-                    $this->log_message("SAMPLE (Post #{$post->ID}): ...{$last_500}");
-                    $sample_count++;
-                }
-            }
-            if ($sample_count === 0) {
-                $this->log_message("DEBUG: No posts in first batch contain 'written by', 'summary of', or 'originally published'");
-                // Log last 300 chars of first 3 posts to see format
-                foreach (array_slice($batch_posts, 0, 3) as $post) {
-                    $last_300 = substr($post->post_content, -300);
-                    $this->log_message("SAMPLE (Post #{$post->ID}): ...{$last_300}");
-                }
-            }
-        }
 
         // Patterns to match attribution lines in all possible formats:
         // - Plain text (no HTML), Gutenberg blocks, classic editor HTML
