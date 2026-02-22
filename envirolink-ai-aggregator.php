@@ -546,7 +546,7 @@ class EnviroLink_AI_Aggregator {
                                 <span class="dashicons dashicons-admin-users" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Update Authors
                             </button>
-                            <button type="button" class="button" id="fix-headlines-btn" title="Fix capitalization on all existing headlines using AI (~$0.002/headline)" style="background: #9b59b6; border-color: #8e44ad; color: white;">
+                            <button type="button" class="button" id="fix-headlines-btn" title="Fix capitalization on all existing headlines using title case rules (no API cost)" style="background: #9b59b6; border-color: #8e44ad; color: white;">
                                 <span class="dashicons dashicons-editor-textcolor" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Fix Headlines
                             </button>
@@ -1813,7 +1813,7 @@ class EnviroLink_AI_Aggregator {
 
             // Fix Headlines button with batch processing
             $('#fix-headlines-btn').click(function() {
-                if (!confirm('This will fix capitalization on ALL existing headlines.\n\nProcesses in batches of 50 posts (prevents timeouts).\n\nOptimizations:\n- Only calls AI for headlines that need fixing\n- Skips headlines already correct\n- Dictionary auto-fixes 200+ known terms\n\nEstimated cost: ~$0.002 per headline that needs AI review\n\nContinue?')) {
+                if (!confirm('This will fix capitalization on ALL existing headlines.\n\nProcesses in batches of 50 posts (prevents timeouts).\n\nHow it works:\n- Converts sentence case to proper Title Case\n- Dictionary handles 200+ proper nouns and acronyms\n- Skips headlines already correct\n- No API calls needed (free and fast)\n\nContinue?')) {
                     return;
                 }
 
@@ -3358,11 +3358,11 @@ class EnviroLink_AI_Aggregator {
         $title = preg_replace('/[!]{2,}/', '!', $title);
         $title = preg_replace('/[?]{2,}/', '?', $title);
 
-        // Capitalize first letter of each sentence
-        $title = ucfirst(strtolower($title));
-        $title = preg_replace_callback('/([.!?]\s+)([a-z])/', function($matches) {
-            return $matches[1] . strtoupper($matches[2]);
-        }, $title);
+        // Apply proper title case conversion
+        $title = $this->to_title_case($title);
+
+        // Apply dictionary-based capitalization for acronyms and proper nouns
+        $title = $this->force_capitalize_known_terms($title);
 
         // No truncation - display full headlines
         // (Previously truncated at 70 chars, but user wants full headlines displayed)
@@ -3760,11 +3760,6 @@ class EnviroLink_AI_Aggregator {
      * @param int $offset Starting position for this batch (default: 0)
      */
     private function fix_headline_capitalization($batch_size = 50, $offset = 0) {
-        $api_key = get_option('envirolink_api_key', '');
-        if (empty($api_key)) {
-            return array('success' => false, 'message' => 'API key not configured');
-        }
-
         // Get or initialize batch state
         $batch_state_key = 'envirolink_headline_fix_state';
         $batch_state = get_transient($batch_state_key);
@@ -3814,9 +3809,8 @@ class EnviroLink_AI_Aggregator {
             set_transient($batch_state_key, $batch_state, 3600); // 1 hour expiry
 
             $total_posts = $batch_state['total_posts'];
-            $estimated_cost = $total_posts * 0.002;
             $this->log_message("Found {$total_posts} posts to check");
-            $this->log_message("Estimated API cost: ~$" . number_format($estimated_cost, 2));
+            $this->log_message("Using title case conversion + dictionary (no API calls needed)");
             $this->log_message("Processing in batches of {$batch_size} posts...");
         } elseif ($batch_state) {
             // Resume from saved state
@@ -3833,11 +3827,9 @@ class EnviroLink_AI_Aggregator {
 
         if (empty($batch_post_ids)) {
             // Batch complete
-            $actual_cost = ($batch_state['fixed_count'] + $batch_state['skipped_count'] + $batch_state['error_count']) * 0.002;
             $message = "Fixed {$batch_state['fixed_count']} headlines";
             if ($batch_state['skipped_count'] > 0) $message .= ", {$batch_state['skipped_count']} already correct";
             if ($batch_state['error_count'] > 0) $message .= ", {$batch_state['error_count']} errors";
-            $message .= " (est. cost: ~$" . number_format($actual_cost, 2) . ")";
 
             $this->log_message('Complete: ' . $message);
             delete_transient($batch_state_key); // Clean up
@@ -3871,24 +3863,11 @@ class EnviroLink_AI_Aggregator {
             $current_title = $post->post_title;
             $this->log_message("Processing [{$current_index}/{$total_posts}]: {$current_title}");
 
-            // First, try dictionary-only fix (fast, no API call)
-            $dictionary_fixed = $this->force_capitalize_known_terms($current_title);
+            // Apply title case conversion first (sentence case → title case)
+            $title_cased = $this->to_title_case($current_title);
 
-            // If dictionary didn't change anything, skip AI call
-            if ($dictionary_fixed === $current_title) {
-                $this->log_message("  → Already correct (dictionary check)");
-                $batch_state['skipped_count']++;
-                continue;
-            }
-
-            // Dictionary made changes - now verify with AI to ensure full correctness
-            $fixed_title = $this->fix_single_headline_with_ai($dictionary_fixed, $api_key);
-
-            if ($fixed_title === false) {
-                // AI failed, but we have dictionary fix - use that
-                $this->log_message("  → ⚠ API error, using dictionary fix only");
-                $fixed_title = $dictionary_fixed;
-            }
+            // Then apply dictionary for known proper nouns and acronyms
+            $fixed_title = $this->force_capitalize_known_terms($title_cased);
 
             // Check if title actually changed from original
             if ($fixed_title === $current_title) {
@@ -3910,9 +3889,6 @@ class EnviroLink_AI_Aggregator {
                 $this->log_message("  → ✓ Fixed: {$fixed_title}");
                 $batch_state['fixed_count']++;
             }
-
-            // Small delay to avoid rate limiting
-            usleep(100000); // 100ms
         }
 
         // Update batch state
@@ -4030,12 +4006,15 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             'doi' => 'DOI', 'blm' => 'BLM', 'usfs' => 'USFS', 'fws' => 'FWS',
             'fema' => 'FEMA', 'usgs' => 'USGS', 'nps' => 'NPS', 'nih' => 'NIH',
             'cdc' => 'CDC', 'fda' => 'FDA', 'osha' => 'OSHA', 'nrc' => 'NRC',
-            'ferc' => 'FERC', 'doe' => 'DOE', 'dot' => 'DOT', 'faa' => 'FAA',
+            'ferc' => 'FERC', 'faa' => 'FAA',
             'nhtsa' => 'NHTSA', 'ntsb' => 'NTSB', 'uscg' => 'USCG',
+            // NOTE: 'doe' (DOE) and 'dot' (DOT) removed — collide with English words
+            // They are preserved when already ALL CAPS via to_title_case()
 
             // United Nations Entities
             'un' => 'UN', 'unep' => 'UNEP', 'ipcc' => 'IPCC', 'unesco' => 'UNESCO',
-            'undp' => 'UNDP', 'who' => 'WHO', 'fao' => 'FAO', 'wfp' => 'WFP',
+            'undp' => 'UNDP', 'fao' => 'FAO', 'wfp' => 'WFP',
+            // NOTE: 'who' (WHO) removed — collides with pronoun "who"
             'unhcr' => 'UNHCR', 'unicef' => 'UNICEF', 'unfccc' => 'UNFCCC',
             'unece' => 'UNECE', 'unescap' => 'UNESCAP', 'unido' => 'UNIDO',
 
@@ -4074,8 +4053,10 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             'northern ireland' => 'Northern Ireland',
 
             // Common Acronyms/Abbreviations
-            'uk' => 'UK', 'us' => 'US', 'usa' => 'USA', 'uae' => 'UAE',
-            'cop' => 'COP', 'cop28' => 'COP28', 'cop29' => 'COP29', 'cop30' => 'COP30',
+            'uk' => 'UK', 'usa' => 'USA', 'uae' => 'UAE',
+            // NOTE: 'us' (US) removed — collides with pronoun "us"
+            // NOTE: 'cop' (COP) removed — collides with "cop" (police); numbered variants below are safe
+            'cop28' => 'COP28', 'cop29' => 'COP29', 'cop30' => 'COP30',
             'pfas' => 'PFAS', 'ddt' => 'DDT', 'pcb' => 'PCB', 'voc' => 'VOC',
             'pm2.5' => 'PM2.5', 'co2' => 'CO2', 'ch4' => 'CH4', 'n2o' => 'N2O',
 
@@ -4123,6 +4104,61 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         return $headline;
+    }
+
+    /**
+     * Convert headline to proper English title case
+     * Capitalizes all words except articles, conjunctions, and short prepositions
+     * Always capitalizes first and last word, handles hyphens, preserves acronyms
+     */
+    private function to_title_case($headline) {
+        $lowercase_words = array(
+            'a', 'an', 'the',
+            'and', 'but', 'or', 'nor', 'yet', 'so',
+            'in', 'on', 'at', 'to', 'for', 'of', 'by',
+            'with', 'from', 'as', 'into', 'via', 'vs'
+        );
+
+        $words = explode(' ', $headline);
+        $word_count = count($words);
+
+        foreach ($words as $i => &$word) {
+            if (empty($word)) continue;
+
+            // Strip leading punctuation for analysis (quotes, parens)
+            preg_match('/^([^a-zA-Z]*)(.*)$/', $word, $parts);
+            $prefix = $parts[1];
+            $core = $parts[2];
+
+            if (empty($core)) continue; // purely numeric/symbols like $2.3
+
+            // Preserve all-uppercase words (acronyms: EPA, WHO, PFAS, CO2)
+            if (preg_match('/^[A-Z][A-Z0-9.]+$/', $core)) continue;
+
+            $is_first_or_last = ($i === 0 || $i === $word_count - 1);
+
+            // Handle hyphenated compounds: "back-breeding" → "Back-Breeding"
+            if (strpos($core, '-') !== false) {
+                $sub_parts = explode('-', $core);
+                foreach ($sub_parts as &$sp) {
+                    if (!empty($sp)) $sp = ucfirst($sp);
+                }
+                $word = $prefix . implode('-', $sub_parts);
+                continue;
+            }
+
+            // Exception words stay lowercase (unless first or last word)
+            $lower_core = strtolower($core);
+            if (!$is_first_or_last && in_array($lower_core, $lowercase_words)) {
+                $word = $prefix . $lower_core;
+                continue;
+            }
+
+            // Capitalize first letter of the word
+            $word = $prefix . ucfirst($core);
+        }
+
+        return implode(' ', $words);
     }
 
     /**
@@ -4535,7 +4571,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
 
                 if ($use_pexels) {
                     $this->log_message('→ Feed configured to use Pexels images, searching...');
-                    $pexels_data = $this->fetch_pexels_image($rewritten['title']);
+                    $pexels_data = $this->fetch_pexels_image($rewritten['title'], $rewritten['image_keywords'] ?? null);
 
                     if ($pexels_data) {
                         $this->log_message('→ ✓ Found Pexels image, will use instead of RSS image');
@@ -5521,6 +5557,14 @@ Original Content:
 Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
+3. Two to three image search keywords for finding a relevant stock photo
+
+Image keyword rules:
+- Focus on the ENVIRONMENTAL or PHYSICAL subject (e.g., \"school bus emissions\", \"coral reef bleaching\", \"wildfire smoke\")
+- NEVER use names of people, politicians, or political parties
+- NEVER use organization names or acronyms (EPA, UN, WHO, etc.)
+- Prefer concrete, visual nouns: wildlife, landscapes, infrastructure, weather events
+- Keep to 2-3 words that would find a good nature/environment stock photo
 
 Headline capitalization rules (use Title Case):
 - Capitalize EVERY word EXCEPT: articles (a, an, the), conjunctions (and, but, or, nor, yet, so), and short prepositions (in, on, at, to, for, of, by, with, from)
@@ -5539,7 +5583,8 @@ Keep the core facts and maintain journalistic integrity. Make it informative and
 
 Format your response as:
 TITLE: [new headline]
-CONTENT: [rewritten content]";
+CONTENT: [rewritten content]
+IMAGE_KEYWORDS: [2-3 visual search terms]";
         
         $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
             'timeout' => 60,
@@ -5574,16 +5619,24 @@ CONTENT: [rewritten content]";
         
         // Parse response
         if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/s', $text, $title_match) &&
-            preg_match('/CONTENT:\s*(.+)$/s', $text, $content_match)) {
+            preg_match('/CONTENT:\s*(.+?)(?:\nIMAGE_KEYWORDS:|\s*$)/s', $text, $content_match)) {
 
             $ai_title = trim($title_match[1]);
 
-            // Apply post-processing to force-capitalize known terms
-            $final_title = $this->force_capitalize_known_terms($ai_title);
+            // Apply title case conversion then dictionary for proper nouns/acronyms
+            $title_cased = $this->to_title_case($ai_title);
+            $final_title = $this->force_capitalize_known_terms($title_cased);
+
+            // Extract image keywords (optional - graceful fallback if not present)
+            $image_keywords = null;
+            if (preg_match('/IMAGE_KEYWORDS:\s*(.+?)(?:\n|$)/s', $text, $keywords_match)) {
+                $image_keywords = trim($keywords_match[1]);
+            }
 
             return array(
                 'title' => $final_title,
-                'content' => trim($content_match[1])
+                'content' => trim($content_match[1]),
+                'image_keywords' => $image_keywords
             );
         }
 
@@ -6306,7 +6359,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
      * Fetch environmental image from Pexels API
      * Returns array with image data or false
      */
-    private function fetch_pexels_image($headline = null) {
+    private function fetch_pexels_image($headline = null, $image_keywords = null) {
         // Get Pexels API key
         $api_key = get_option('envirolink_pexels_api_key', '');
 
@@ -6315,8 +6368,20 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             return false;
         }
 
-        // Extract keywords from headline for targeted image search
+        // Use AI-provided keywords if available, otherwise extract from headline
         $query = null;
+        if ($image_keywords) {
+            $query = $image_keywords;
+            error_log('EnviroLink: [PEXELS] Using AI-extracted keywords: ' . $query);
+
+            $result = $this->fetch_from_pexels_api($api_key, $query);
+            if ($result) {
+                return $result;
+            }
+
+            error_log('EnviroLink: [PEXELS] ⚠ AI keyword search failed, trying headline extraction...');
+        }
+
         if ($headline) {
             $query = $this->extract_image_keywords($headline);
             if ($query) {
@@ -6593,7 +6658,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         $response = wp_remote_get('https://api.pexels.com/v1/search?' . http_build_query(array(
             'query' => $query,
             'orientation' => 'landscape',
-            'per_page' => 1  // Get 1 random result
+            'per_page' => 5  // Get multiple results for variety and filtering
         )), array(
             'timeout' => 15,
             'headers' => array(
@@ -6624,8 +6689,35 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             return false;
         }
 
-        // Get first result
-        $photo = $body['photos'][0];
+        // Filter out photos with political/military content
+        $excluded_terms = array('politician', 'president', 'campaign', 'rally', 'vote',
+            'election', 'gun', 'weapon', 'military', 'war', 'soldier', 'army',
+            'rifle', 'pistol', 'firearm', 'ammunition', 'combat', 'battle',
+            'trump', 'biden', 'congress', 'capitol', 'protest', 'police');
+
+        $clean_photos = array();
+        foreach ($body['photos'] as $candidate) {
+            $alt_text = isset($candidate['alt']) ? strtolower($candidate['alt']) : '';
+            $is_clean = true;
+            foreach ($excluded_terms as $term) {
+                if (strpos($alt_text, $term) !== false) {
+                    error_log('EnviroLink: [PEXELS] ✗ Filtered out image - contains "' . $term . '" in alt text');
+                    $is_clean = false;
+                    break;
+                }
+            }
+            if ($is_clean) {
+                $clean_photos[] = $candidate;
+            }
+        }
+
+        if (empty($clean_photos)) {
+            error_log('EnviroLink: [PEXELS] ✗ All images filtered out for query: ' . $query);
+            return false;
+        }
+
+        // Pick a random photo from clean results for variety
+        $photo = $clean_photos[array_rand($clean_photos)];
 
         if (!isset($photo['src']['large']) || !isset($photo['id'])) {
             error_log('EnviroLink: [PEXELS] ✗ Response missing required data');
