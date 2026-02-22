@@ -202,7 +202,9 @@ The plugin is designed to be uploaded via WordPress admin:
 - Combines RSS item description and content
 - Strips HTML tags from content before sending to AI
 - AI rewrites to 200-300 words (2-4 paragraphs)
-- Title limited to 80 characters
+- Title has no length limit (use whatever length needed for clarity)
+- AI response includes three fields: `TITLE:`, `CONTENT:`, and `IMAGE_KEYWORDS:`
+- Post-processing enforces title case and proper noun capitalization on every title
 
 ## Common Modifications
 
@@ -252,6 +254,27 @@ if ($locations) {
 Update the 'model' parameter in the API request body in `rewrite_with_ai` method (line ~2100).
 
 ## Recent Version History
+
+**v1.50.0** (2026-02-22) - AI image keywords, proper title case, and Pexels content filtering
+- **AI Image Keywords:** `rewrite_with_ai()` now returns `IMAGE_KEYWORDS:` field with 2-3 environmental/visual search terms at zero extra API cost
+  - Replaces naive string-matching that produced irrelevant stock photos for political headlines
+  - Prompt instructs AI to focus on physical/environmental subjects, never people or organizations
+  - Graceful fallback to `extract_image_keywords()` if AI keywords absent
+  - Code: Lines ~5560-5567 (prompt), ~5621-5634 (parsing), ~4571 (integration)
+- **Proper Title Case Enforcement:** New `to_title_case()` method converts sentence-case headlines to proper English Title Case
+  - Applied as post-processing on AI output (`rewrite_with_ai()`), SEO optimization (`optimize_title_for_seo()`), and Fix Headlines tool
+  - Handles: hyphenated words, leading punctuation, acronym preservation, first/last word rules
+  - Fix Headlines tool no longer requires API calls — free and instant
+  - Code: Lines ~4114-4158 (method), ~5627 (AI post-processing), ~3867 (fix tool)
+- **Pexels Improvements:** Fetches 5 results instead of 1, filters political/military content via alt text, picks randomly for variety
+  - Excluded terms: politician, president, campaign, trump, biden, gun, weapon, military, etc.
+  - Code: Lines ~6658-6720 (filtering), ~6362-6399 (keyword fallback chain)
+- **Dictionary Cleanup:** Removed 5 ambiguous entries that collided with common English words:
+  - `'who' → 'WHO'` (was incorrectly capitalizing pronoun "who")
+  - `'us' → 'US'` (was incorrectly capitalizing pronoun "us")
+  - `'cop' → 'COP'`, `'doe' → 'DOE'`, `'dot' → 'DOT'` also removed
+  - These acronyms are preserved when already ALL CAPS via `to_title_case()` acronym detection
+- **See also:** Detailed documentation in "Headline Capitalization System" and "AI-Powered Image Keyword Extraction" sections below
 
 **v1.47.0** (2025-11-23) - NEW FEATURE: Ontology tagging for Daily Roundups
 - **Future Roundups:** Automatically inherit ontology tags from 30 included articles
@@ -658,6 +681,175 @@ The plugin implements sophisticated image extraction with multiple fallback stra
   2. Fetch from RSS feed (most reliable)
   3. Scrape article page
 - See `update_feed_images()` method (line ~1140) and `ajax_update_feed_images()` (line ~994)
+
+## Headline Capitalization System (v1.50.0)
+
+Headlines go through a multi-layer capitalization pipeline to ensure consistent, professional Title Case across all content — regardless of whether the AI follows the prompt instructions or the RSS source uses sentence case.
+
+### The Problem (Pre-v1.50.0)
+
+The AI (`rewrite_with_ai()`) is instructed to use Title Case, but frequently ignores this — especially when the source article (e.g., BBC, Guardian) uses sentence case. The AI mimics the source style instead of following the prompt. Before v1.50.0, the only post-processing was a dictionary of known proper nouns (`force_capitalize_known_terms()`), which didn't convert general words from sentence case to title case.
+
+Examples of headlines that slipped through:
+- "Trump administration shifts $2.3 billion clean school bus program..." (sentence case)
+- "Virginia legislature delays ban on paraquat pesticide linked to parkinson's disease"
+- "Nasa moon mission delayed as rocket technical issues ground artemis program"
+
+### Solution: Three-Layer Pipeline
+
+Every headline passes through three layers, applied in order:
+
+**Layer 1: `to_title_case()` method** (line ~4114)
+Deterministic English title case conversion:
+- Capitalizes all words except: articles (`a`, `an`, `the`), conjunctions (`and`, `but`, `or`, `nor`, `yet`, `so`), and short prepositions (`in`, `on`, `at`, `to`, `for`, `of`, `by`, `with`, `from`, `as`, `into`, `via`, `vs`)
+- ALWAYS capitalizes first and last word of the headline
+- Handles hyphenated compounds: "back-breeding" → "Back-Breeding"
+- Preserves all-uppercase words (acronyms): "EPA", "PFAS", "CO2" stay unchanged
+- Handles leading punctuation: `"word` → `"Word`
+- Skips numbers and symbols: `$2.3` stays as-is
+
+**Layer 2: `force_capitalize_known_terms()` method** (line ~4010)
+Dictionary of 200+ known terms with case-insensitive regex matching:
+- US states (all 50), countries (60+), geographic features (Amazon, Arctic, Galapagos...)
+- Federal agencies (EPA, NOAA, NASA, FEMA, CDC...)
+- UN entities (UNEP, IPCC, UNESCO, UNFCCC...)
+- International organizations (EU, NATO, WWF, IUCN...)
+- Environmental proper nouns (Paris Agreement, Kyoto Protocol, Clean Air Act...)
+- Chemical/scientific terms (PFAS, DDT, CO2, PM2.5...)
+- Multi-word terms sorted longest-first to prevent partial matches
+- Uses `\b` word boundaries to avoid matching inside longer words
+
+**Layer 3: AI prompt instructions** (defense in depth)
+The `rewrite_with_ai()` prompt includes detailed Title Case rules with examples. When the AI follows them, Layers 1-2 have little to do. When it doesn't, they catch everything.
+
+### Where the Pipeline Is Applied
+
+| Location | Method | Layers Applied |
+|----------|--------|----------------|
+| New articles from AI | `rewrite_with_ai()` return (line ~5627) | All 3 (AI + to_title_case + dictionary) |
+| SEO title optimization | `optimize_title_for_seo()` (line ~3358) | to_title_case + dictionary |
+| Fix Headlines tool | `fix_headline_capitalization()` (line ~3867) | to_title_case + dictionary |
+
+### Ambiguous Acronym Handling
+
+Five dictionary entries were removed because they collide with common English words:
+
+| Removed | Acronym | Collides With | Why Safe to Remove |
+|---------|---------|---------------|-------------------|
+| `'who'` | WHO (World Health Org) | pronoun "who" | AI writes "WHO" in caps; `to_title_case()` preserves it |
+| `'us'` | US (United States) | pronoun "us" | AI writes "US" in caps; `to_title_case()` preserves it |
+| `'cop'` | COP (Conference of Parties) | "cop" (police) | `cop28`/`cop29`/`cop30` entries still work |
+| `'doe'` | DOE (Dept of Energy) | "doe" (female deer) | AI writes "DOE" in caps |
+| `'dot'` | DOT (Dept of Transportation) | "dot" (common noun) | AI writes "DOT" in caps |
+
+The key insight: `to_title_case()` preserves any word that is already ALL CAPS (matches `/^[A-Z][A-Z0-9.]+$/`). So when the AI or RSS correctly writes "WHO" or "US", it stays uppercase without needing the dictionary. The dictionary was only needed to *convert* lowercase versions — which is exactly when it caused false positives.
+
+### Fix Headlines Admin Tool (Purple Button)
+
+The "Fix Headlines" button in System Status applies `to_title_case()` + `force_capitalize_known_terms()` to all existing posts. As of v1.50.0:
+- **No API calls** — purely deterministic, free, and fast
+- Processes in batches of 50 posts (prevents timeouts)
+- Skips headlines that are already correct
+- Handles newsfeed articles and daily roundups
+- Code: `fix_headline_capitalization()` (line ~3762), JS handler (line ~1815)
+
+### Example Transformations
+
+| Input (sentence case) | Output (title case) |
+|----------------------|---------------------|
+| "Trump administration shifts $2.3 billion clean school bus program away from electric vehicles toward natural gas options" | "Trump Administration Shifts $2.3 Billion Clean School Bus Program Away from Electric Vehicles Toward Natural Gas Options" |
+| "Virginia legislature delays ban on paraquat pesticide linked to parkinson's disease" | "Virginia Legislature Delays Ban on Paraquat Pesticide Linked to Parkinson's Disease" |
+| "Nasa moon mission delayed as rocket technical issues ground artemis program" | "NASA Moon Mission Delayed as Rocket Technical Issues Ground Artemis Program" |
+| "Giant tortoises return to galápagos island after nearly 200 years of extinction through revolutionary back-breeding program" | "Giant Tortoises Return to Galapagos Island After Nearly 200 Years of Extinction Through Revolutionary Back-Breeding Program" |
+| "Mystery Donors WHO Spent £23 Million on Chelsea Flower Show" | "Mystery Donors Who Spent £23 Million on Chelsea Flower Show" |
+
+## AI-Powered Image Keyword Extraction (v1.50.0)
+
+### The Problem
+
+Pexels image search previously used `extract_image_keywords()` — a naive string-matching function that checks headlines against a hardcoded list of ~50 visual terms. When no visual terms match, it falls back to ANY word longer than 3 characters. This meant political headlines produced irrelevant images:
+
+- "Trump Administration Rolls Back School Bus Emission Standards" → extracted "trump" → searched Pexels → got campaign merchandise photos
+- "Biden Signs Executive Order on Climate" → extracted "biden" → got political portraits
+
+### Solution: AI Generates Image Keywords at Zero Extra Cost
+
+The `rewrite_with_ai()` prompt now requests an `IMAGE_KEYWORDS:` field alongside `TITLE:` and `CONTENT:`. Since the AI already reads the full article, it can suggest 2-3 contextually appropriate environmental/visual search terms — at no additional API cost (same single API call).
+
+**Prompt instructions for image keywords:**
+```
+Image keyword rules:
+- Focus on the ENVIRONMENTAL or PHYSICAL subject (e.g., "school bus emissions",
+  "coral reef bleaching", "wildfire smoke")
+- NEVER use names of people, politicians, or political parties
+- NEVER use organization names or acronyms (EPA, UN, WHO, etc.)
+- Prefer concrete, visual nouns: wildlife, landscapes, infrastructure, weather events
+- Keep to 2-3 words that would find a good nature/environment stock photo
+```
+
+**AI response format:**
+```
+TITLE: [headline]
+CONTENT: [article]
+IMAGE_KEYWORDS: [2-3 visual search terms]
+```
+
+**Response parsing** (line ~5621):
+- CONTENT regex stops before IMAGE_KEYWORDS: `/CONTENT:\s*(.+?)(?:\nIMAGE_KEYWORDS:|\s*$)/s`
+- IMAGE_KEYWORDS regex: `/IMAGE_KEYWORDS:\s*(.+?)(?:\n|$)/s`
+- Graceful fallback: if IMAGE_KEYWORDS not present, value is `null`
+
+### Keyword Fallback Chain
+
+`fetch_pexels_image()` (line ~6362) tries keywords in this priority order:
+
+1. **AI-extracted keywords** (`$image_keywords` parameter) — best quality, context-aware
+2. **Headline extraction** (`extract_image_keywords()`) — string-matching against 50 visual terms
+3. **Generic nature keywords** — random selection from: "nature landscape", "forest trees", "mountain wilderness", "ocean water", "wildlife animal", "green plants", "sunset sky", "river stream"
+
+Each level only triggers if the previous one fails (returns no Pexels results).
+
+### Pexels Content Filtering
+
+`fetch_from_pexels_api()` (line ~6658) now fetches 5 results instead of 1, filters them, and picks randomly:
+
+**Filtering:** Each photo's `alt` text is checked against excluded terms:
+```php
+$excluded_terms = array('politician', 'president', 'campaign', 'rally', 'vote',
+    'election', 'gun', 'weapon', 'military', 'war', 'soldier', 'army',
+    'rifle', 'pistol', 'firearm', 'ammunition', 'combat', 'battle',
+    'trump', 'biden', 'congress', 'capitol', 'protest', 'police');
+```
+
+Photos with any excluded term in alt text are rejected. If all 5 are filtered out, the function returns `false` and the fallback chain continues.
+
+**Random selection:** From the remaining clean photos, one is picked at random (`array_rand()`). This adds visual variety — the same search query won't always produce the same image.
+
+### Integration with Article Processing
+
+In `fetch_and_process_feeds()` (line ~4571), when a feed has Pexels enabled:
+```php
+$pexels_data = $this->fetch_pexels_image($rewritten['title'], $rewritten['image_keywords'] ?? null);
+```
+
+The `?? null` ensures backward compatibility — if the AI response doesn't include IMAGE_KEYWORDS for any reason, the code falls back to headline extraction.
+
+### What Does NOT Change
+
+- `extract_image_keywords()` — kept as fallback for roundups and non-AI contexts
+- RSS image extraction — unchanged for feeds without Pexels enabled
+- Roundup image selection — still uses `extract_image_keywords()` on the AI-generated roundup headline
+- Per-feed Pexels toggle — unchanged; must be enabled per feed in admin
+- Unsplash code — unchanged (deprecated but kept for backward compatibility)
+
+### Example Improvements
+
+| Headline | Old Keywords (string-matching) | New Keywords (AI) |
+|----------|-------------------------------|-------------------|
+| "Trump Administration Rolls Back School Bus Emission Standards" | "trump" (fallback to any word) | "school bus emissions" |
+| "Biden Signs Executive Order on Offshore Drilling" | "biden" (fallback) | "offshore oil drilling" |
+| "EPA Reverses Clean Water Protections for Wetlands" | "water" (from visual list) | "wetlands water protection" |
+| "Scientists Discover New Coral Species in Deep Ocean" | "coral ocean" (visual list match) | "deep ocean coral reef" |
 
 ## Progress Tracking & Logging
 
