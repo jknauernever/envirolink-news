@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.50.0
+ * Version: 1.51.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.50.0');
+define('ENVIROLINK_VERSION', '1.51.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -79,6 +79,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_categorize_posts', array($this, 'ajax_categorize_posts'));
         add_action('wp_ajax_envirolink_update_authors', array($this, 'ajax_update_authors'));
         add_action('wp_ajax_envirolink_fix_headlines', array($this, 'ajax_fix_headlines'));
+        add_action('wp_ajax_envirolink_fix_seo_meta', array($this, 'ajax_fix_seo_meta'));
 
         // Ontology management AJAX handlers
         add_action('wp_ajax_envirolink_seed_ontology', array($this, 'ajax_seed_ontology'));
@@ -549,6 +550,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="fix-headlines-btn" title="Fix capitalization on all existing headlines using title case rules (no API cost)" style="background: #9b59b6; border-color: #8e44ad; color: white;">
                                 <span class="dashicons dashicons-editor-textcolor" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Fix Headlines
+                            </button>
+                            <button type="button" class="button" id="fix-seo-meta-btn" title="Set AIOSEO metadata (SEO title, meta description, Open Graph) on all existing posts (no API cost)" style="background: #1abc9c; border-color: #16a085; color: white;">
+                                <span class="dashicons dashicons-search" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Fix SEO Meta
                             </button>
                         </div>
 
@@ -1875,6 +1880,65 @@ class EnviroLink_AI_Aggregator {
                 processBatch(0);
             });
 
+            // Fix SEO Meta button with batch processing
+            $('#fix-seo-meta-btn').click(function() {
+                if (!confirm('This will set AIOSEO metadata on ALL existing posts.\n\nProcesses in batches of 50 posts (prevents timeouts).\n\nWhat it sets:\n- SEO title (≤60 chars)\n- Meta description (≤160 chars)\n- Open Graph title & description\n- Article section & tags\n- Schema markup (NewsArticle)\n\nSkips posts that already have a meta description.\nNo API calls needed (free and fast).\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('');
+                startProgressPolling();
+
+                function processBatch(offset) {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'envirolink_fix_seo_meta',
+                            offset: offset
+                        },
+                        timeout: 120000,
+                        success: function(response) {
+                            if (response.success) {
+                                var data = response.data;
+
+                                if (data.complete) {
+                                    stopProgressPolling();
+                                    status.html('<span style="color: green;">✓ ' + data.message + '</span>');
+                                    btn.prop('disabled', false);
+                                } else {
+                                    var progressMsg = 'Processed ' + data.processed + ' of ' + data.total + ' posts... ';
+                                    progressMsg += 'Updated: ' + data.fixed + ', Skipped: ' + data.skipped;
+                                    if (data.errors > 0) {
+                                        progressMsg += ', Errors: ' + data.errors;
+                                    }
+                                    status.html('<span style="color: blue;">' + progressMsg + '</span>');
+
+                                    setTimeout(function() {
+                                        processBatch(data.next_offset);
+                                    }, 500);
+                                }
+                            } else {
+                                stopProgressPolling();
+                                status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                                btn.prop('disabled', false);
+                            }
+                        },
+                        error: function() {
+                            stopProgressPolling();
+                            status.html('<span style="color: red;">✗ Batch error at offset ' + offset + '. Try clicking Fix SEO Meta again to resume.</span>');
+                            btn.prop('disabled', false);
+                        }
+                    });
+                }
+
+                processBatch(0);
+            });
+
             // Generate Roundup Now button
             $('#generate-roundup-btn').click(function() {
                 if (!confirm('Generate daily editorial roundup now?\n\nThis will:\n1. Run the feed aggregator to get latest articles\n2. Gather posts from past 24 hours\n3. Generate AI editorial content\n4. Auto-publish the roundup post\n\nThis may take 1-2 minutes.\n\nContinue?')) {
@@ -2387,6 +2451,34 @@ class EnviroLink_AI_Aggregator {
 
             if ($result['success']) {
                 // Return full batch info for JavaScript to handle
+                wp_send_json_success($result);
+            } else {
+                wp_send_json_error(array('message' => $result['message']));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Fix SEO metadata on all existing posts
+     * Sets AIOSEO title, description, Open Graph, and schema markup
+     */
+    public function ajax_fix_seo_meta() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $batch_size = 50;
+            $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+
+            $result = $this->fix_seo_meta($batch_size, $offset);
+
+            if ($result['success']) {
                 wp_send_json_success($result);
             } else {
                 wp_send_json_error(array('message' => $result['message']));
@@ -3914,6 +4006,153 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * Fix SEO metadata on all existing EnviroLink posts
+     * Sets AIOSEO title, description, Open Graph tags, and schema markup
+     * Processes in batches to prevent timeouts
+     * @param int $batch_size Number of posts per batch
+     * @param int $offset Starting position in post ID list
+     * @return array Result with batch progress info
+     */
+    private function fix_seo_meta($batch_size = 50, $offset = 0) {
+        $batch_state_key = 'envirolink_seo_meta_fix_state';
+        $batch_state = get_transient($batch_state_key);
+
+        if ($offset === 0 && !$batch_state) {
+            $this->log_message('Starting SEO metadata fix...');
+
+            // Get all EnviroLink posts (newsfeed articles)
+            $newsfeed_args = array(
+                'post_type' => 'post',
+                'posts_per_page' => -1,
+                'meta_key' => 'envirolink_source_url',
+                'meta_compare' => 'EXISTS',
+                'post_status' => 'any',
+                'fields' => 'ids'
+            );
+            $newsfeed_post_ids = get_posts($newsfeed_args);
+
+            // Get daily roundups
+            $roundup_args = array(
+                'post_type' => 'post',
+                'posts_per_page' => -1,
+                'post_status' => 'any',
+                's' => 'Daily Environmental News Roundup',
+                'fields' => 'ids'
+            );
+            $roundup_post_ids = get_posts($roundup_args);
+
+            $all_post_ids = array_unique(array_merge($newsfeed_post_ids, $roundup_post_ids));
+
+            if (empty($all_post_ids)) {
+                $this->log_message('No posts found to process');
+                return array('success' => true, 'message' => 'No posts to update', 'complete' => true);
+            }
+
+            $batch_state = array(
+                'all_post_ids' => $all_post_ids,
+                'total_posts' => count($all_post_ids),
+                'fixed_count' => 0,
+                'skipped_count' => 0,
+                'error_count' => 0,
+                'started_at' => time()
+            );
+            set_transient($batch_state_key, $batch_state, 3600);
+
+            $total_posts = $batch_state['total_posts'];
+            $this->log_message("Found {$total_posts} posts to check");
+            $this->log_message("Setting AIOSEO metadata (no API calls needed)");
+            $this->log_message("Processing in batches of {$batch_size} posts...");
+        } elseif ($batch_state) {
+            $this->log_message("Resuming from offset {$offset}...");
+        } else {
+            return array('success' => false, 'message' => 'Batch state lost. Please restart.');
+        }
+
+        $total_posts = $batch_state['total_posts'];
+        $all_post_ids = $batch_state['all_post_ids'];
+
+        $batch_post_ids = array_slice($all_post_ids, $offset, $batch_size);
+
+        if (empty($batch_post_ids)) {
+            $message = "Set SEO meta on {$batch_state['fixed_count']} posts";
+            if ($batch_state['skipped_count'] > 0) $message .= ", {$batch_state['skipped_count']} already had meta";
+            if ($batch_state['error_count'] > 0) $message .= ", {$batch_state['error_count']} errors";
+
+            $this->log_message('Complete: ' . $message);
+            delete_transient($batch_state_key);
+
+            return array(
+                'success' => true,
+                'message' => $message,
+                'complete' => true
+            );
+        }
+
+        $batch_posts = get_posts(array(
+            'post_type' => 'post',
+            'post__in' => $batch_post_ids,
+            'posts_per_page' => $batch_size,
+            'post_status' => 'any'
+        ));
+
+        foreach ($batch_posts as $post) {
+            $current_index = $offset + array_search($post->ID, $batch_post_ids) + 1;
+            $progress_percent = floor(($current_index / $total_posts) * 100);
+            $this->update_progress(array(
+                'percent' => $progress_percent,
+                'current' => $current_index,
+                'total' => $total_posts,
+                'status' => 'Fixing SEO metadata...'
+            ));
+
+            $this->log_message("Processing [{$current_index}/{$total_posts}]: {$post->post_title}");
+
+            // Skip if already has a meta description (don't overwrite manually set descriptions)
+            $existing_description = get_post_meta($post->ID, '_aioseo_description', true);
+            if (!empty($existing_description)) {
+                $this->log_message("  → Skipped (already has meta description)");
+                $batch_state['skipped_count']++;
+                continue;
+            }
+
+            $seo_title = $this->truncate_for_seo($post->post_title, 60);
+            $meta_description = $this->generate_meta_description($post->post_content, 160);
+
+            update_post_meta($post->ID, '_aioseo_title', $seo_title);
+            update_post_meta($post->ID, '_aioseo_description', $meta_description);
+            update_post_meta($post->ID, '_aioseo_og_title', $seo_title);
+            update_post_meta($post->ID, '_aioseo_og_description', $meta_description);
+            update_post_meta($post->ID, '_aioseo_og_article_section', 'Environment');
+            update_post_meta($post->ID, '_aioseo_og_article_tags', 'environmental news,climate change,conservation,sustainability');
+            update_post_meta($post->ID, '_aioseo_schema_type', 'Article');
+            update_post_meta($post->ID, '_aioseo_schema_article_type', 'NewsArticle');
+
+            $this->log_message("  → ✓ Set SEO meta: title (" . strlen($seo_title) . " chars), description (" . strlen($meta_description) . " chars)");
+            $batch_state['fixed_count']++;
+        }
+
+        set_transient($batch_state_key, $batch_state, 3600);
+
+        $next_offset = $offset + $batch_size;
+        $remaining = $total_posts - $next_offset;
+        $remaining = $remaining > 0 ? $remaining : 0;
+
+        $this->log_message("Batch complete. {$remaining} posts remaining.");
+
+        return array(
+            'success' => true,
+            'complete' => false,
+            'next_offset' => $next_offset,
+            'total' => $total_posts,
+            'processed' => $next_offset,
+            'remaining' => $remaining,
+            'fixed' => $batch_state['fixed_count'],
+            'skipped' => $batch_state['skipped_count'],
+            'errors' => $batch_state['error_count']
+        );
+    }
+
+    /**
      * Fix capitalization for a single headline using lightweight AI call
      * Returns fixed headline or false on error
      */
@@ -4159,6 +4398,52 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         return implode(' ', $words);
+    }
+
+    /**
+     * Truncate text for SEO fields at word boundary
+     * @param string $text Text to truncate
+     * @param int $max_length Maximum character length (default 60 for SEO titles)
+     * @return string Truncated text with "..." if shortened
+     */
+    private function truncate_for_seo($text, $max_length = 60) {
+        if (strlen($text) <= $max_length) {
+            return $text;
+        }
+        $truncated = substr($text, 0, $max_length - 3);
+        // Break at last space to avoid cutting mid-word
+        $last_space = strrpos($truncated, ' ');
+        if ($last_space !== false) {
+            $truncated = substr($truncated, 0, $last_space);
+        }
+        return $truncated . '...';
+    }
+
+    /**
+     * Generate meta description from post content
+     * Strips HTML and extracts first sentence(s) up to max length
+     * @param string $content HTML content
+     * @param int $max_length Maximum character length (default 160)
+     * @return string Clean text description
+     */
+    private function generate_meta_description($content, $max_length = 160) {
+        $text = wp_strip_all_tags($content);
+        $text = preg_replace('/\s+/', ' ', trim($text));
+        if (strlen($text) <= $max_length) {
+            return $text;
+        }
+        // Try to break at sentence boundary
+        $truncated = substr($text, 0, $max_length);
+        $last_period = strrpos($truncated, '. ');
+        if ($last_period !== false && $last_period > $max_length * 0.5) {
+            return substr($truncated, 0, $last_period + 1);
+        }
+        // Fall back to word boundary
+        $last_space = strrpos($truncated, ' ');
+        if ($last_space !== false) {
+            $truncated = substr($truncated, 0, $last_space);
+        }
+        return $truncated . '...';
     }
 
     /**
@@ -4658,6 +4943,21 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                                 }
                             }
 
+                            // Set AIOSEO metadata for SEO, Open Graph, and schema
+                            if (function_exists('aioseo')) {
+                                $seo_title = $this->truncate_for_seo($optimized_title, 60);
+                                $meta_description = $this->generate_meta_description($rewritten['content'], 160);
+
+                                update_post_meta($post_id, '_aioseo_title', $seo_title);
+                                update_post_meta($post_id, '_aioseo_description', $meta_description);
+                                update_post_meta($post_id, '_aioseo_og_title', $seo_title);
+                                update_post_meta($post_id, '_aioseo_og_description', $meta_description);
+                                update_post_meta($post_id, '_aioseo_og_article_section', 'Environment');
+                                update_post_meta($post_id, '_aioseo_og_article_tags', 'environmental news,climate change,conservation,sustainability');
+                                update_post_meta($post_id, '_aioseo_schema_type', 'Article');
+                                update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
+                            }
+
                             // Update featured image if found
                             if ($image_url) {
                                 $this->set_featured_image_from_url($image_url, $post_id);
@@ -4811,8 +5111,17 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                             }
                         }
 
-                        // Set AIOSEO schema markup for better search appearance
+                        // Set AIOSEO metadata for SEO, Open Graph, and schema
                         if (function_exists('aioseo')) {
+                            $seo_title = $this->truncate_for_seo($optimized_title, 60);
+                            $meta_description = $this->generate_meta_description($rewritten['content'], 160);
+
+                            update_post_meta($post_id, '_aioseo_title', $seo_title);
+                            update_post_meta($post_id, '_aioseo_description', $meta_description);
+                            update_post_meta($post_id, '_aioseo_og_title', $seo_title);
+                            update_post_meta($post_id, '_aioseo_og_description', $meta_description);
+                            update_post_meta($post_id, '_aioseo_og_article_section', 'Environment');
+                            update_post_meta($post_id, '_aioseo_og_article_tags', 'environmental news,climate change,conservation,sustainability');
                             update_post_meta($post_id, '_aioseo_schema_type', 'Article');
                             update_post_meta($post_id, '_aioseo_schema_article_type', 'NewsArticle');
                         }
@@ -5633,9 +5942,14 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
                 $image_keywords = trim($keywords_match[1]);
             }
 
+            // Strip H1 tags from content (convert to H2) to prevent "More than one H1" AIOSEO warnings
+            $content = trim($content_match[1]);
+            $content = preg_replace('/<h1(\s|>)/i', '<h2$1', $content);
+            $content = str_ireplace('</h1>', '</h2>', $content);
+
             return array(
                 'title' => $final_title,
-                'content' => trim($content_match[1]),
+                'content' => $content,
                 'image_keywords' => $image_keywords
             );
         }
