@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.4
+ * Version: 1.52.5
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.4');
+define('ENVIROLINK_VERSION', '1.52.5');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4728,15 +4728,28 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         $lock_data = get_transient($lock_key);
 
         if ($lock_data) {
-            // Lock exists - check if the process is actually still alive
+            // Lock exists - decide whether to respect it or clear it as stale.
+            // Three independent stale-detection signals (any one = clear):
+            //   1. Lock age beyond max_execution_time + grace: process can't still be running.
+            //   2. Heartbeat age > 10 min: process is dead or stuck (heartbeat fires every ~5 articles).
+            //   3. PID liveness check says dead (only reliable on hosts where it works).
+            // Signals 1 and 2 are host-independent — they protect us when PID checks are disabled.
             $run_type = $manual_run ? 'manual run' : 'CRON run';
             $lock_age = time() - $lock_data['start_time'];
             $lock_pid = isset($lock_data['pid']) ? $lock_data['pid'] : null;
             $last_heartbeat = isset($lock_data['last_heartbeat']) ? $lock_data['last_heartbeat'] : $lock_data['start_time'];
             $heartbeat_age = time() - $last_heartbeat;
 
-            if ($lock_pid && $this->is_process_alive($lock_pid)) {
-                // Process is ALIVE - respect the lock (no matter how long it's been running)
+            $lock_orphaned = $lock_age > 1200;       // > max_execution_time (900s) + 5min grace
+            $heartbeat_stale = $heartbeat_age > 600; // > 10 min with no progress
+            $pid_alive = $lock_pid && $this->is_process_alive($lock_pid);
+
+            if ($lock_orphaned || $heartbeat_stale) {
+                error_log('EnviroLink: Clearing stale lock - PID ' . $lock_pid . ' lock_age:' . $lock_age . 's heartbeat_age:' . $heartbeat_age . 's');
+                delete_transient($lock_key);
+                // Continue to acquire new lock below
+            } elseif ($pid_alive) {
+                // Process is ALIVE and lock is fresh - respect it
                 error_log('EnviroLink: Skipping ' . $run_type . ' - PID ' . $lock_pid . ' is still alive and processing');
                 error_log('EnviroLink: Lock age: ' . $lock_age . 's, Last heartbeat: ' . $heartbeat_age . 's ago');
 
@@ -4745,7 +4758,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                     'message' => 'Another instance is actively running (PID: ' . $lock_pid . ', running for ' . $lock_age . 's). Please wait and try again.'
                 );
             } else {
-                // Process is DEAD or missing - this is a stale lock, clear it
+                // PID check says dead (or no PID) - clear lock
                 if ($lock_pid) {
                     error_log('EnviroLink: Clearing stale lock (PID ' . $lock_pid . ' is dead/missing after ' . $lock_age . 's)');
                 } else {
