@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.7
+ * Version: 1.52.8
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.7');
+define('ENVIROLINK_VERSION', '1.52.8');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2767,6 +2767,12 @@ class EnviroLink_AI_Aggregator {
     private function cleanup_duplicates() {
         global $wpdb;
 
+        // Step 2 is O(n^2) over the post set, which gets expensive past a few
+        // hundred posts. Extend resource limits so we don't crash mid-run.
+        @ini_set('max_execution_time', 900);
+        @ini_set('memory_limit', '256M');
+        @set_time_limit(900);
+
         $this->clear_progress();
         $this->update_progress(array(
             'status' => 'running',
@@ -2857,21 +2863,48 @@ class EnviroLink_AI_Aggregator {
             }
         }
 
-        $this->log_message('Checking ' . count($remaining_posts) . ' remaining posts for title similarity');
+        // Cap Step 2 scope to the most recent N posts. Pairwise comparison of
+        // thousands of posts is O(n^2) and duplicates only appear in fresh
+        // content, so comparing year-old posts is pure waste.
+        $title_similarity_scope = 500;
+        if (count($remaining_posts) > $title_similarity_scope) {
+            // $posts came back DESC from get_posts() (default), but be explicit:
+            // sort newest first by ID, then slice.
+            usort($remaining_posts, function($a, $b) {
+                return $b->ID - $a->ID;
+            });
+            $this->log_message('Limiting title-similarity scan to ' . $title_similarity_scope . ' most recent posts (skipping ' . (count($remaining_posts) - $title_similarity_scope) . ' older posts where duplicates are unlikely)');
+            $remaining_posts = array_slice($remaining_posts, 0, $title_similarity_scope);
+        }
+
+        $remaining_count = count($remaining_posts);
+        $this->log_message('Checking ' . $remaining_count . ' remaining posts for title similarity');
 
         // Compare each post with every other post
-        for ($i = 0; $i < count($remaining_posts); $i++) {
+        for ($i = 0; $i < $remaining_count; $i++) {
             $post_a = $remaining_posts[$i];
 
             if (in_array($post_a->ID, $processed_ids)) {
                 continue;
             }
 
+            // Progress update every 25 posts so the UI doesn't look frozen.
+            if ($i % 25 == 0) {
+                $percent = $remaining_count > 0 ? floor(($i / $remaining_count) * 100) : 0;
+                $this->update_progress(array(
+                    'status' => 'running',
+                    'message' => 'Comparing titles (' . $i . '/' . $remaining_count . ')',
+                    'percent' => $percent,
+                    'current' => $i,
+                    'total' => $remaining_count
+                ));
+            }
+
             $duplicates = array($post_a);
             $title_a = strtolower(trim($post_a->post_title));
             $len_a = strlen($title_a);
 
-            for ($j = $i + 1; $j < count($remaining_posts); $j++) {
+            for ($j = $i + 1; $j < $remaining_count; $j++) {
                 $post_b = $remaining_posts[$j];
 
                 if (in_array($post_b->ID, $processed_ids)) {

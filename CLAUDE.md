@@ -255,6 +255,66 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.52.3 → v1.52.8** (2026-05-15) - WP-Cron stability series: timeout, lock, and cleanup fixes
+
+This series resolved a chain of production outages that surfaced after WordPress started emailing "Maximum execution time of 300 seconds exceeded" fatals from `wp-cron.php`. Each fix uncovered the next failure mode underneath it. The full sequence is documented because future debugging often needs to understand *why* a value was chosen, not just *what* it is.
+
+**v1.52.3** — Fix `similar_text()` cron timeout in duplicate detection
+- **Symptom:** WordPress sent fatal-error emails: `Maximum execution time of 300 seconds exceeded` at line `similar_text()` during `wp-cron.php`.
+- **Root cause:** During article processing, Phase 3 duplicate detection looped through the last 500 posts and called PHP's `similar_text()` (worst-case O(n³)) on every pair. With 10 feeds × 10 articles per run, that was ~50,000 expensive calls — enough to exceed PHP's 300s limit.
+- **Fixes (three layered):**
+  1. **Length pre-filter before `similar_text()`** in both `fetch_and_process_feeds()` (line ~5001) and `cleanup_duplicates()` (line ~2865). If two titles' lengths differ by >30%, they can't be ≥80% similar, so skip the expensive call. Eliminates ~80% of comparisons cheaply.
+  2. **Reduced duplicate-check post pool** in `fetch_and_process_feeds()` from 500 → 100 (line ~4943). Duplicates surface within hours, not days.
+  3. **Raised `set_time_limit()` + `max_execution_time`** in `fetch_and_process_feeds()` from 300s → 900s (line ~4808). Safety net for edge cases.
+
+**v1.52.4** — Guard `exec()` for hosts that disable it
+- **Symptom:** New fatal: `Call to undefined function exec() in ... on line 5540`.
+- **Root cause:** The host disables `posix_kill`, `exec`, and PHP can't read `/proc/PID` (likely `open_basedir`). The PID-liveness check in `is_process_alive()` (added v1.42.0) had no fallback when all three failed — it called `exec("ps -p $pid")` directly, which fatal'd.
+- **Fix:** Wrap every `exec()` call with `function_exists('exec')`. When no liveness check is possible, conservatively return `true` (assume alive) — the 1800s lock transient becomes the final fallback. Lines ~5527-5547.
+
+**v1.52.5** — Host-independent stale-lock detection
+- **Symptom:** `Another instance is actively running (PID: 981443, running for 1235s)`. The v1.52.4 "assume alive" default meant a *dead* process's lock blocked subsequent runs for up to 30 minutes (the transient TTL).
+- **Root cause:** Lock-clearance logic relied entirely on `is_process_alive()`. On hosts where that returns `true` by default, locks are never cleared until transient expiry.
+- **Fix:** Three independent stale signals in `fetch_and_process_feeds()` lock-check block (line ~4731). Any one clears the lock:
+  1. **Lock age > 1200s** (max_execution_time 900s + 5min grace) — process *cannot* still be running.
+  2. **Heartbeat age > 600s** (later tightened in v1.52.7) — process is dead or stuck.
+  3. **PID liveness check** — still used when the host supports it.
+
+**v1.52.6** — Make "Update Now" trigger the upgrade directly
+- **Symptom:** Clicking "Update Now" in the plugin's Check-for-Updates panel just dumped the user on the generic Plugins list.
+- **Root cause:** `ajax_check_updates()` (line ~2621) hardcoded `update_url` to `admin_url('plugins.php')`.
+- **Fix:** Build a proper `update.php?action=upgrade-plugin&plugin=...` URL wrapped in `wp_nonce_url()`. One-click upgrade flow now works (line ~2618-2625).
+
+**v1.52.7** — Per-article heartbeat + tighter stale threshold
+- **Symptom:** `Another instance is actively running (PID: 991813, running for 198s)` — well below v1.52.5's 600s heartbeat threshold.
+- **Root cause:** Heartbeat fired every 5 articles via `$articles_processed % 5 == 0`. That check is *false* for articles 1-4 (`1 % 5 == 0` is false). So during the first 5 articles, the heartbeat never updated. If the process crashed before article 5, `last_heartbeat` was still equal to `start_time` and `heartbeat_age ≈ lock_age` — couldn't distinguish "crashed early" from "just started."
+- **Fixes:**
+  1. **Heartbeat on every article** — drop the `% 5` check (line ~4928). One transient write per article is negligibly cheap.
+  2. **Heartbeat at start of each feed** (line ~4907) — covers RSS-fetch time between feeds.
+  3. **Tightened heartbeat-stale threshold 600s → 180s** (line ~4752). With per-article heartbeat (max ~90-120s per slow article), 180s leaves 50%+ headroom. Dead-lock recovery in ~3 min instead of 10.
+
+**v1.52.8** — Fix `cleanup_duplicates()` hanging on large post sets
+- **Symptom:** Clean Duplicates UI stuck at "0%" with stale "49 of 50" counter; log showed "Checking 4225 remaining posts for title similarity" then nothing.
+- **Root cause (three compounding issues):**
+  1. **No `set_time_limit()`** in `cleanup_duplicates()` — PHP killed the process at 300s.
+  2. **O(n²) over all 4225 posts** = ~8.9M pair comparisons. Even with v1.52.3's length pre-filter eliminating ~80%, that's still ~1.8M `similar_text()` calls — minutes to hours.
+  3. **No progress updates** during Step 2's nested loops — UI showed leftover state from previous "Run All Feeds" run.
+- **Fixes:**
+  1. **`set_time_limit(900)`** + memory bump at the top of `cleanup_duplicates()` (line ~2767).
+  2. **Capped Step 2 scope to 500 most recent posts** (line ~2859). Duplicates only appear in fresh content — comparing year-old posts pairwise is waste. Drops comparisons from ~8.9M to ~125K.
+  3. **Progress updates every 25 posts** inside the comparison loop so the UI reflects actual work.
+
+**Key invariants established by this series:**
+- `fetch_and_process_feeds()` always has 900s execution budget.
+- `cleanup_duplicates()` always has 900s execution budget.
+- Lock recovery is bounded at ~3 minutes worst case (heartbeat-stale signal).
+- Locks cannot persist past 1200s under any circumstances (orphan signal).
+- Every `exec()` / `posix_kill()` call is gated behind `function_exists()`.
+- `similar_text()` is always preceded by a length-ratio pre-filter (≥0.7 ratio).
+- Title-similarity scans are capped at 500 posts; recent-post window for runtime dedup is 100.
+
+---
+
 **v1.50.0** (2026-02-22) - AI image keywords, proper title case, and Pexels content filtering
 - **AI Image Keywords:** `rewrite_with_ai()` now returns `IMAGE_KEYWORDS:` field with 2-3 environmental/visual search terms at zero extra API cost
   - Replaces naive string-matching that produced irrelevant stock photos for political headlines
