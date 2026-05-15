@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.5
+ * Version: 1.52.6
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.5');
+define('ENVIROLINK_VERSION', '1.52.6');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2607,7 +2607,15 @@ class EnviroLink_AI_Aggregator {
             $update = $envirolink_update_checker->checkForUpdates();
 
             if ($update !== null && version_compare($update->version, ENVIROLINK_VERSION, '>')) {
-                // Update available
+                // Update available - build a direct "upgrade-plugin" URL with nonce
+                // so clicking "Update Now" kicks off the actual update instead of
+                // dumping the user on the generic Plugins list.
+                $plugin_file = plugin_basename(__FILE__);
+                $direct_update_url = wp_nonce_url(
+                    self_admin_url('update.php?action=upgrade-plugin&plugin=' . urlencode($plugin_file)),
+                    'upgrade-plugin_' . $plugin_file
+                );
+
                 $message = sprintf(
                     'Update available: v%s → v%s',
                     ENVIROLINK_VERSION,
@@ -2618,7 +2626,7 @@ class EnviroLink_AI_Aggregator {
                     'update_available' => true,
                     'current_version' => ENVIROLINK_VERSION,
                     'new_version' => $update->version,
-                    'update_url' => admin_url('plugins.php')
+                    'update_url' => $direct_update_url
                 ));
             } else {
                 // No update available
