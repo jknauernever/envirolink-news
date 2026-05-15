@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.3
+ * Version: 1.52.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.3');
+define('ENVIROLINK_VERSION', '1.52.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -5523,22 +5523,30 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             return posix_kill($pid, 0);
         }
 
-        // Windows fallback: Use shell command
-        if (stripos(PHP_OS, 'WIN') === 0) {
+        // Windows fallback: Use shell command (only if exec is available)
+        if (stripos(PHP_OS, 'WIN') === 0 && function_exists('exec')) {
             $output = array();
             exec("tasklist /FI \"PID eq $pid\" /NH 2>NUL", $output);
             return count($output) > 0 && strpos($output[0], (string)$pid) !== false;
         }
 
         // Generic Unix fallback: Check if /proc/PID exists (Linux)
-        if (file_exists('/proc/' . $pid)) {
+        // Suppress errors in case open_basedir blocks /proc access.
+        if (@file_exists('/proc/' . $pid)) {
             return true;
         }
 
-        // Last resort: Try ps command
-        $output = array();
-        exec("ps -p $pid 2>/dev/null", $output);
-        return count($output) > 1; // More than just header line
+        // Last resort: Try ps command — only if exec is enabled.
+        // Many shared hosts disable exec() via disable_functions; on those hosts
+        // we cannot determine liveness, so we conservatively assume the process
+        // is alive. The lock transient (1800s) is the ultimate stale-lock fallback.
+        if (function_exists('exec')) {
+            $output = array();
+            @exec("ps -p $pid 2>/dev/null", $output);
+            return count($output) > 1; // More than just header line
+        }
+
+        return true;
     }
 
     /**
