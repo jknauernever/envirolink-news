@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.6
+ * Version: 1.52.7
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.6');
+define('ENVIROLINK_VERSION', '1.52.7');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4739,7 +4739,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             // Lock exists - decide whether to respect it or clear it as stale.
             // Three independent stale-detection signals (any one = clear):
             //   1. Lock age beyond max_execution_time + grace: process can't still be running.
-            //   2. Heartbeat age > 10 min: process is dead or stuck (heartbeat fires every ~5 articles).
+            //   2. Heartbeat age > 3 min: process is dead or stuck (heartbeat fires every article).
             //   3. PID liveness check says dead (only reliable on hosts where it works).
             // Signals 1 and 2 are host-independent — they protect us when PID checks are disabled.
             $run_type = $manual_run ? 'manual run' : 'CRON run';
@@ -4749,7 +4749,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             $heartbeat_age = time() - $last_heartbeat;
 
             $lock_orphaned = $lock_age > 1200;       // > max_execution_time (900s) + 5min grace
-            $heartbeat_stale = $heartbeat_age > 600; // > 10 min with no progress
+            $heartbeat_stale = $heartbeat_age > 180; // > 3 min with no progress (single article maxes ~90-120s)
             $pid_alive = $lock_pid && $this->is_process_alive($lock_pid);
 
             if ($lock_orphaned || $heartbeat_stale) {
@@ -4904,6 +4904,10 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
 
             $this->log_message('Processing feed: ' . $feed['name']);
 
+            // Refresh heartbeat before the RSS download so between-feed time
+            // (which can be slow) doesn't look like a hung process.
+            $this->update_lock_heartbeat();
+
             // Set custom User-Agent to avoid being blocked
             add_filter('http_request_args', array($this, 'custom_http_request_args'), 10, 2);
 
@@ -4925,10 +4929,9 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                 $total_processed++;
                 $articles_processed++;
 
-                // Update lock heartbeat every 5 articles to keep lock fresh during long runs
-                if ($articles_processed % 5 == 0) {
-                    $this->update_lock_heartbeat();
-                }
+                // Refresh heartbeat on every article so a crashed run is detected quickly.
+                // A single transient write is negligibly cheap.
+                $this->update_lock_heartbeat();
 
                 // Update progress
                 $percent = floor(($articles_processed / $total_articles) * 100);
