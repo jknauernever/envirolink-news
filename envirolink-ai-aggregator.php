@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.2
+ * Version: 1.52.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.2');
+define('ENVIROLINK_VERSION', '1.52.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -2861,6 +2861,7 @@ class EnviroLink_AI_Aggregator {
 
             $duplicates = array($post_a);
             $title_a = strtolower(trim($post_a->post_title));
+            $len_a = strlen($title_a);
 
             for ($j = $i + 1; $j < count($remaining_posts); $j++) {
                 $post_b = $remaining_posts[$j];
@@ -2870,6 +2871,18 @@ class EnviroLink_AI_Aggregator {
                 }
 
                 $title_b = strtolower(trim($post_b->post_title));
+
+                // Cheap pre-filter: similar_text() is O(n^3) worst-case. Titles that
+                // differ in length by >30% cannot be 85%+ similar, so skip them.
+                $len_b = strlen($title_b);
+                if ($len_a === 0 || $len_b === 0) {
+                    continue;
+                }
+                $longer = max($len_a, $len_b);
+                $shorter = min($len_a, $len_b);
+                if (($shorter / $longer) < 0.7) {
+                    continue;
+                }
 
                 // Check if titles are similar
                 $similarity = $this->calculate_title_similarity($title_a, $title_b);
@@ -4790,10 +4803,11 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         // Increase resource limits for long-running feed processing
-        // Prevents timeouts when processing multiple articles with AI + image scraping
-        @ini_set('max_execution_time', 300); // 5 minutes
+        // Prevents timeouts when processing multiple articles with AI + image scraping.
+        // 900s headroom is needed when many feeds + similar_text() duplicate checks pile up.
+        @ini_set('max_execution_time', 900); // 15 minutes
         @ini_set('memory_limit', '256M');     // 256MB RAM
-        @set_time_limit(300);
+        @set_time_limit(900);
 
         $api_key = get_option('envirolink_api_key');
         $feeds = get_option('envirolink_feeds', array());
@@ -4940,7 +4954,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                         'post_status' => 'any', // Check ALL statuses: publish, future, draft, pending
                         'meta_key' => 'envirolink_source_url',
                         'meta_compare' => 'EXISTS',
-                        'posts_per_page' => 500, // Check last 500 posts added to WordPress
+                        'posts_per_page' => 100, // Recent posts only — duplicates surface within hours, not days
                         'orderby' => 'ID', // Order by when added, not publication date
                         'order' => 'DESC'
                     ));
@@ -4998,8 +5012,23 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                             $this->log_message('→ Checking for similar titles...');
                             $original_title_lower = strtolower(trim($original_title));
 
+                            $orig_len = strlen($original_title_lower);
                             foreach ($all_posts as $post) {
                                 $existing_title_lower = strtolower(trim($post->post_title));
+
+                                // Cheap pre-filter: similar_text() is O(n^3) worst-case and
+                                // dominates cron time. Titles that differ in length by >30%
+                                // cannot be 80%+ similar, so skip the expensive call.
+                                $existing_len = strlen($existing_title_lower);
+                                if ($orig_len === 0 || $existing_len === 0) {
+                                    continue;
+                                }
+                                $longer = max($orig_len, $existing_len);
+                                $shorter = min($orig_len, $existing_len);
+                                if (($shorter / $longer) < 0.7) {
+                                    continue;
+                                }
+
                                 $similarity = $this->calculate_title_similarity($original_title_lower, $existing_title_lower);
 
                                 if ($similarity >= 80) { // 80% or more similar = likely duplicate
