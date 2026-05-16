@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.52.8
+ * Version: 1.53.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.52.8');
+define('ENVIROLINK_VERSION', '1.53.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -81,6 +81,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_fix_headlines', array($this, 'ajax_fix_headlines'));
         add_action('wp_ajax_envirolink_fix_seo_meta', array($this, 'ajax_fix_seo_meta'));
         add_action('wp_ajax_envirolink_strip_attribution', array($this, 'ajax_strip_attribution'));
+        add_action('wp_ajax_envirolink_clean_attachment_metadata', array($this, 'ajax_clean_attachment_metadata'));
 
         // Ontology management AJAX handlers
         add_action('wp_ajax_envirolink_seed_ontology', array($this, 'ajax_seed_ontology'));
@@ -559,6 +560,10 @@ class EnviroLink_AI_Aggregator {
                             <button type="button" class="button" id="strip-attribution-btn" title="Remove 'This article was written by...' attribution lines from all existing posts" style="background: #e74c3c; border-color: #c0392b; color: white;">
                                 <span class="dashicons dashicons-editor-strikethrough" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
                                 Strip Attribution
+                            </button>
+                            <button type="button" class="button" id="clean-attachment-metadata-btn" title="Remove placeholder tokens like #image_title from attachment caption/description fields (one-time fix for legacy uploads)" style="background: #8e44ad; border-color: #6c3483; color: white;">
+                                <span class="dashicons dashicons-format-image" style="font-size: 16px; width: 16px; height: 16px; vertical-align: middle; margin-top: 2px;"></span>
+                                Clean Image Captions
                             </button>
                         </div>
 
@@ -1944,6 +1949,38 @@ class EnviroLink_AI_Aggregator {
                 processBatch(0);
             });
 
+            // Clean Image Captions button (one-shot, no batching needed)
+            $('#clean-attachment-metadata-btn').click(function() {
+                if (!confirm('This will clear placeholder tokens like "#image_title" from the caption and description fields of all image attachments.\n\nLegitimate captions (e.g., "Photo by John Doe on Pexels") are preserved — only single-token placeholders are cleared.\n\nContinue?')) {
+                    return;
+                }
+
+                var btn = $(this);
+                var status = $('#run-now-status');
+
+                btn.prop('disabled', true);
+                status.html('<span style="color: blue;">Cleaning attachment metadata...</span>');
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: { action: 'envirolink_clean_attachment_metadata' },
+                    timeout: 60000,
+                    success: function(response) {
+                        btn.prop('disabled', false);
+                        if (response.success) {
+                            status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
+                        } else {
+                            status.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
+                        }
+                    },
+                    error: function() {
+                        btn.prop('disabled', false);
+                        status.html('<span style="color: red;">✗ Error cleaning attachment metadata</span>');
+                    }
+                });
+            });
+
             // Strip Attribution button with batch processing
             $('#strip-attribution-btn').click(function() {
                 if (!confirm('This will remove attribution lines from ALL existing posts.\n\nRemoves text like:\n- "This article was written by the EnviroLink Editors as a summary of..."\n- "This is a summary of an article from..."\n- "Originally published by/in..."\n- "Source: ..."\n\nProcesses in batches of 50 posts.\nNo API calls needed (free and fast).\n\nContinue?')) {
@@ -2547,6 +2584,25 @@ class EnviroLink_AI_Aggregator {
             } else {
                 wp_send_json_error(array('message' => $result['message']));
             }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
+        } catch (Error $e) {
+            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage()));
+        }
+    }
+
+    /**
+     * AJAX: Clean placeholder tokens out of attachment metadata
+     */
+    public function ajax_clean_attachment_metadata() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'Unauthorized'));
+            return;
+        }
+
+        try {
+            $result = $this->clean_attachment_metadata();
+            wp_send_json_success($result);
         } catch (Exception $e) {
             wp_send_json_error(array('message' => 'Error: ' . $e->getMessage()));
         } catch (Error $e) {
@@ -4294,6 +4350,51 @@ class EnviroLink_AI_Aggregator {
             'fixed' => $batch_state['fixed_count'],
             'skipped' => $batch_state['skipped_count'],
             'errors' => $batch_state['error_count']
+        );
+    }
+
+    /**
+     * Clean placeholder garbage out of attachment caption + description fields.
+     * Upstream CMSes leave tokens like "#image_title" in image IPTC/EXIF
+     * metadata, which WordPress copies into post_excerpt and post_content
+     * during media_handle_sideload(). The theme then displays the literal
+     * token as a caption. This pass clears any field that matches the
+     * pattern ^#[a-z_]+$ (a single placeholder token, no spaces).
+     *
+     * Pexels/Unsplash captions (e.g., "Photo by John Doe on Pexels") do not
+     * match this pattern and are preserved.
+     *
+     * @return array success + counts
+     */
+    private function clean_attachment_metadata() {
+        global $wpdb;
+
+        $caption_cleared = $wpdb->query(
+            "UPDATE {$wpdb->posts}
+             SET post_excerpt = ''
+             WHERE post_type = 'attachment'
+               AND post_excerpt REGEXP '^#[a-z_]+$'"
+        );
+
+        $description_cleared = $wpdb->query(
+            "UPDATE {$wpdb->posts}
+             SET post_content = ''
+             WHERE post_type = 'attachment'
+               AND post_content REGEXP '^#[a-z_]+$'"
+        );
+
+        $caption_cleared = (int) $caption_cleared;
+        $description_cleared = (int) $description_cleared;
+
+        return array(
+            'success' => true,
+            'caption_cleared' => $caption_cleared,
+            'description_cleared' => $description_cleared,
+            'message' => sprintf(
+                'Cleared placeholder tokens from %d caption field(s) and %d description field(s).',
+                $caption_cleared,
+                $description_cleared
+            ),
         );
     }
 
@@ -6160,6 +6261,18 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         $this->log_message('    → Uploaded to media library (ID: ' . $attachment_id . ')');
+
+        // Strip IPTC/EXIF metadata that WordPress copies into the attachment.
+        // Upstream news CMSes commonly leave unsubstituted placeholders like
+        // "#image_title" in their image metadata, which then leak into the
+        // theme's caption display. Pexels/Unsplash paths re-set post_excerpt
+        // afterward with their own attribution strings, so this doesn't
+        // overwrite intentional captions.
+        wp_update_post(array(
+            'ID' => $attachment_id,
+            'post_excerpt' => '',
+            'post_content' => '',
+        ));
 
         // Add alt text for SEO and accessibility
         $post_title = get_the_title($post_id);

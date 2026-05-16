@@ -255,6 +255,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.53.0** (2026-05-16) - Strip placeholder tokens from attachment caption + description
+
+- **Symptom:** Every published article showed the literal text `#image_title` below its featured image (Blocksy `ct-media-container`).
+- **Root cause:** `media_handle_sideload()` internally calls `wp_read_image_metadata()` which copies IPTC/EXIF caption + description fields from the source image file into the WP attachment's `post_excerpt` and `post_content`. Upstream news CMSes leave unsubstituted template tokens like `#image_title` in those IPTC fields. The Blocksy theme then renders `post_excerpt` as a `<figcaption>`, leaking the token to readers.
+- **Forward fix:** `set_featured_image_from_url()` (line ~6162) now calls `wp_update_post()` immediately after `media_handle_sideload()` succeeds to set `post_excerpt = ''` and `post_content = ''`. Pexels/Unsplash credit captions are unaffected because they're written *after* `set_featured_image_from_url()` returns, or via a separate `wp_insert_attachment()` code path.
+- **Backfill tool:** New purple "Clean Image Captions" button in Maintenance Tools fires `clean_attachment_metadata()`, which runs two `UPDATE` queries against `wp_posts` matching `post_excerpt REGEXP '^#[a-z_]+$'` (and same for `post_content`). The regex matches single placeholder tokens only — legit captions like "Photo by John Doe on Pexels" are preserved. Single SQL UPDATE for all 4000+ attachments, no batching needed.
+- **Code:** Forward fix at lines ~6162-6172. Backfill method at ~4307 (`clean_attachment_metadata()`). AJAX handler `ajax_clean_attachment_metadata()`. Hook at `add_action('wp_ajax_envirolink_clean_attachment_metadata', ...)`. Button in admin UI in Maintenance Tools row.
+
 **v1.52.3 → v1.52.8** (2026-05-15) - WP-Cron stability series: timeout, lock, and cleanup fixes
 
 This series resolved a chain of production outages that surfaced after WordPress started emailing "Maximum execution time of 300 seconds exceeded" fatals from `wp-cron.php`. Each fix uncovered the next failure mode underneath it. The full sequence is documented because future debugging often needs to understand *why* a value was chosen, not just *what* it is.
