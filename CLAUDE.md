@@ -255,6 +255,13 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.54.2** (2026-08-12) - FIX: Run All Feeds / Run Feed buttons now run in the background (web-server timeout killed long runs)
+
+- **Symptom:** After v1.54.1 made articles publish successfully, "Run All Feeds" showed `✗ Error occurred` and the log froze mid-article (last line "→ Sending to AI..."). Posts created before the freeze were real and live.
+- **Root cause:** `ajax_run_now()` ran the ENTIRE aggregation inside one AJAX request. With articles now succeeding (~10-20s each: AI call + image sideload), a full run takes many minutes — the web server kills the request long before that (historically runs "worked" only because every article failed in 9s). The jQuery `error:` handler then shows the generic "Error occurred"; the killed PHP process explains the frozen log.
+- **Fix:** `ajax_run_now()` / `ajax_run_feed()` now schedule a single-shot cron event (`envirolink_run_aggregator_background`, args: feed index or -1 for all) via `start_background_run()`, call `spawn_cron()`, and return immediately. The JS keeps polling the progress transient (which the run refreshes on every article) and re-enables the buttons when the transient disappears (= run finished, log auto-saved to `envirolink_last_run_log` by `clear_progress()`). Cron-context runs are not subject to the web-server AJAX timeout (this host runs wp-cron 300s+; the function sets a 900s budget).
+- **Detail:** the AJAX handler seeds the progress transient BEFORE responding so the poller never races a not-yet-started run; the JS `backgroundRun` flag distinguishes background completion from the synchronous tools (Fix Headlines etc.) that still stop polling from their own success handlers.
+
 **v1.54.1** (2026-08-12) - FIX: Parse claude-sonnet-5 responses (thinking blocks broke content[0] assumption)
 
 - **Symptom:** After the v1.54.0 model swap, every article failed with `✗ AI API error: Unexpected API response (HTTP 200)` — the API call succeeded but parsing failed.

@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.54.1
+ * Version: 1.54.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.54.1');
+define('ENVIROLINK_VERSION', '1.54.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -62,6 +62,11 @@ class EnviroLink_AI_Aggregator {
         // Cron hooks
         add_action('envirolink_fetch_feeds', array($this, 'fetch_and_process_feeds'));
         add_action('envirolink_daily_roundup', array($this, 'generate_daily_roundup'));
+        // Background runner for the admin "Run" buttons (single-shot cron event).
+        // A full run takes many minutes now that every article makes an AI call +
+        // image sideload; running it inside the AJAX request gets killed by the
+        // web server's request timeout mid-run ("Error occurred" in the UI).
+        add_action('envirolink_run_aggregator_background', array($this, 'run_aggregator_background'), 10, 1);
 
         // Frontend styling for Unsplash attribution captions
         add_action('wp_head', array($this, 'output_caption_css'));
@@ -1450,6 +1455,7 @@ class EnviroLink_AI_Aggregator {
 
             // Progress polling
             var progressInterval = null;
+            var backgroundRun = false; // true while a background (cron) run is in flight
 
             function startProgressPolling() {
                 if (progressInterval) clearInterval(progressInterval);
@@ -1483,6 +1489,15 @@ class EnviroLink_AI_Aggregator {
                                     }
                                 }
                             } else {
+                                // Progress transient gone. For a background run this
+                                // means the run finished (or died) server-side.
+                                if (backgroundRun) {
+                                    backgroundRun = false;
+                                    $('#run-now-status').html('<span style="color: green;">✓ Background run finished — see log below (also saved to Last Run Log)</span>');
+                                    $('#run-now-btn').prop('disabled', false);
+                                    $('.run-feed-btn').prop('disabled', false)
+                                        .find('.dashicons').removeClass('dashicons-update-spin');
+                                }
                                 stopProgressPolling();
                             }
                         }
@@ -1516,6 +1531,14 @@ class EnviroLink_AI_Aggregator {
                     type: 'POST',
                     data: { action: 'envirolink_run_now' },
                     success: function(response) {
+                        if (response.success && response.data.background) {
+                            // Run continues server-side; keep polling for progress.
+                            // Button re-enables when the poller sees the run finish.
+                            backgroundRun = true;
+                            status.html('<span style="color: #0073aa;">⏳ ' + response.data.message + '</span>');
+                            startProgressPolling();
+                            return;
+                        }
                         stopProgressPolling();
                         if (response.success) {
                             status.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
@@ -1552,6 +1575,13 @@ class EnviroLink_AI_Aggregator {
                         feed_index: feedIndex
                     },
                     success: function(response) {
+                        if (response.success && response.data.background) {
+                            // Run continues server-side; keep polling for progress.
+                            backgroundRun = true;
+                            $('#run-now-status').html('<span style="color: #0073aa;">⏳ ' + feedName + ': ' + response.data.message + '</span>');
+                            startProgressPolling();
+                            return;
+                        }
                         stopProgressPolling();
                         icon.removeClass('dashicons-update-spin');
                         if (response.success) {
@@ -2323,7 +2353,14 @@ class EnviroLink_AI_Aggregator {
     }
     
     /**
-     * AJAX: Run aggregator now
+     * AJAX: Run aggregator now (in the background via a single-shot cron event)
+     *
+     * The run itself takes many minutes (AI call + image sideload per article),
+     * far longer than the web server allows one AJAX request to live. Running it
+     * inline got the PHP process killed mid-run and showed "Error occurred" in
+     * the UI even while posts were being created. So we schedule an immediate
+     * cron event and return right away; the JS keeps polling the progress
+     * transient for the live log until the run finishes.
      */
     public function ajax_run_now() {
         if (!current_user_can('manage_options')) {
@@ -2331,23 +2368,16 @@ class EnviroLink_AI_Aggregator {
             return;
         }
 
-        try {
-            $result = $this->fetch_and_process_feeds(true); // Pass true for manual run
+        $this->start_background_run(null);
 
-            if ($result['success']) {
-                wp_send_json_success(array('message' => $result['message']));
-            } else {
-                wp_send_json_error(array('message' => $result['message']));
-            }
-        } catch (Exception $e) {
-            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
-        } catch (Error $e) {
-            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
-        }
+        wp_send_json_success(array(
+            'message' => 'Aggregator running in background — watch progress below',
+            'background' => true
+        ));
     }
 
     /**
-     * AJAX: Run aggregator for a single feed
+     * AJAX: Run aggregator for a single feed (in the background — see ajax_run_now)
      */
     public function ajax_run_feed() {
         if (!current_user_can('manage_options')) {
@@ -2362,18 +2392,53 @@ class EnviroLink_AI_Aggregator {
             return;
         }
 
-        try {
-            $result = $this->fetch_and_process_feeds(true, $feed_index); // Pass true for manual run and feed index
+        $this->start_background_run($feed_index);
 
-            if ($result['success']) {
-                wp_send_json_success(array('message' => $result['message']));
+        wp_send_json_success(array(
+            'message' => 'Feed running in background — watch progress below',
+            'background' => true
+        ));
+    }
+
+    /**
+     * Seed the progress display and schedule the background aggregator run.
+     * $feed_index null = all feeds.
+     */
+    private function start_background_run($feed_index) {
+        // Seed the progress transient BEFORE responding so the JS poller
+        // immediately sees an active run instead of stopping on active:false.
+        $this->update_progress(array(
+            'percent' => 0,
+            'status' => 'Starting in background...',
+            'current' => 0,
+            'total' => 0,
+            'log' => array('[' . wp_date('H:i:s') . '] Run queued — waiting for background process to start...')
+        ));
+
+        // -1 arg is a sentinel for "all feeds" because cron args must be
+        // serializable and distinguish this event from a single-feed run.
+        $args = array($feed_index === null ? -1 : (int) $feed_index);
+        wp_schedule_single_event(time() - 1, 'envirolink_run_aggregator_background', $args);
+        spawn_cron();
+    }
+
+    /**
+     * Cron callback: run the aggregator as a manual run in the background.
+     * $feed_index -1 = all feeds, otherwise a single feed index.
+     */
+    public function run_aggregator_background($feed_index = -1) {
+        try {
+            if ($feed_index === -1 || $feed_index === null || $feed_index === '') {
+                $this->fetch_and_process_feeds(true);
             } else {
-                wp_send_json_error(array('message' => $result['message']));
+                $this->fetch_and_process_feeds(true, (int) $feed_index);
             }
         } catch (Exception $e) {
-            wp_send_json_error(array('message' => 'Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
+            $this->log_message('✗ FATAL: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            $this->clear_progress();
         } catch (Error $e) {
-            wp_send_json_error(array('message' => 'Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine()));
+            $this->log_message('✗ FATAL: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            $this->clear_progress();
         }
     }
 
