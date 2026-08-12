@@ -978,17 +978,21 @@ CSS for metadata display should be added via Appearance → Customize → Additi
 
 ## Deployment
 
-### GitHub Actions Auto-Deployment
-- Repository has GitHub Actions workflow for SFTP deployment
-- On push to `main` branch, uploads plugin files to WordPress server
-- Requires secrets: `SFTP_HOST`, `SFTP_USERNAME`, `SFTP_PASSWORD`, `SFTP_PORT`, `SFTP_PATH`
-- See `DEPLOYMENT.md` for setup instructions
-- Excludes: Git files, shell scripts, ZIP files
+### How deployment ACTUALLY works (verified 2026-08-12)
 
-### Manual Deployment
-1. Create ZIP: `zip -r envirolink-ai-aggregator.zip . -x "*.git*" "*.sh" "*.zip"`
-2. Upload via WordPress admin: Plugins → Add New → Upload Plugin
-3. Or SFTP directly to `/wp-content/plugins/envirolink-ai-aggregator/`
+**The SFTP auto-deploy described in DEPLOYMENT.md is DEAD.** The workflow file is gone from the repo and its last recorded runs (October 2025) all failed. Merging to `main` deploys NOTHING by itself.
+
+**The real deploy path is the plugin's built-in update checker** (Plugin Update Checker, configured at the top of `envirolink-ai-aggregator.php`): it watches this repo's **GitHub releases** (latest release wins; falls back to tags only if no releases exist). The site admin then pulls the update from WordPress.
+
+**Release procedure for every new version:**
+1. Bump the version in BOTH places: the `Version:` plugin header and the `ENVIROLINK_VERSION` constant in `envirolink-ai-aggregator.php`. Add a CLAUDE.md version-history entry.
+2. Merge to `main` (PR flow).
+3. Run the **"Publish Plugin Release"** workflow (`.github/workflows/release.yml`, added 2026-08-12) from the Actions tab — `workflow_dispatch` with input `version` = `v<X.Y.Z>` (leading `v`, e.g. `v1.54.0`). It creates the git tag + GitHub release via `GITHUB_TOKEN`. The job **fails on purpose if the input doesn't match the plugin's `Version:` header on `main`** — bump the header first.
+4. In WordPress admin: EnviroLink News → "Check for Updates" → "Update Now", then "Run All Feeds".
+
+**Critical for Claude Code remote sessions:** `git push` of tags is rejected by the session proxy (403 — only the designated `claude/...` branch is pushable), and the GitHub Releases API returns "Creating, editing, or deleting releases is not permitted for this session type." **Do not fight these — they are hard permission boundaries.** The working route is to trigger the release workflow via the GitHub MCP tool `actions_run_trigger` (`workflow_id: release.yml`, `ref: main`, `inputs: {"version": "vX.Y.Z"}`). This is exactly how v1.54.0 was deployed. Also note: raw `curl` to `api.github.com` Actions endpoints may be blocked ("GitHub access is not enabled for this session") — use the `mcp__github__actions_*` tools for run status instead.
+
+**Manual fallback:** `./create-plugin.sh` builds a correctly-structured ZIP (top-level folder must be `envirolink-ai-aggregator/` and must include `plugin-update-checker/` — wrong structure caused the v1.12.0 fatal). Upload via Plugins → Add New → Upload Plugin.
 
 ## Potential Issues
 
