@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.54.0
+ * Version: 1.54.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.54.0');
+define('ENVIROLINK_VERSION', '1.54.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4598,6 +4598,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             ),
             'body' => json_encode(array(
                 'model' => 'claude-sonnet-5',
+                'thinking' => array('type' => 'disabled'),
                 'max_tokens' => 200,
                 'messages' => array(
                     array(
@@ -4613,12 +4614,13 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        $headline_text = $this->extract_api_text($body);
 
-        if (!isset($body['content'][0]['text'])) {
+        if ($headline_text === null) {
             return false;
         }
 
-        $ai_headline = trim($body['content'][0]['text']);
+        $ai_headline = trim($headline_text);
 
         // Apply post-processing to force-capitalize known terms
         $final_headline = $this->force_capitalize_known_terms($ai_headline);
@@ -6370,6 +6372,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
             ),
             'body' => json_encode(array(
                 'model' => 'claude-sonnet-5',
+                'thinking' => array('type' => 'disabled'),
                 'max_tokens' => 1024,
                 'messages' => array(
                     array(
@@ -6389,8 +6392,9 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        $text = $this->extract_api_text($body);
 
-        if (!isset($body['content'][0]['text'])) {
+        if ($text === null) {
             // Surface the API's own error (e.g. "model not found" after a model
             // retirement — the cause of the silent June 2026 outage) instead of
             // silently skipping the article.
@@ -6404,8 +6408,6 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
             $this->notify_api_failure($error_message);
             return false;
         }
-
-        $text = $body['content'][0]['text'];
         
         // Parse response
         if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/s', $text, $title_match) &&
@@ -6436,6 +6438,25 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         }
 
         return false;
+    }
+
+    /**
+     * Extract the first text block from an Anthropic Messages API response body.
+     * Newer Claude models (claude-sonnet-5+) can return a "thinking" block BEFORE
+     * the text block, so content[0] is not always the text — that assumption
+     * caused the "Unexpected API response (HTTP 200)" errors in v1.54.0.
+     * Returns the text string, or null if no text block exists.
+     */
+    private function extract_api_text($body) {
+        if (!isset($body['content']) || !is_array($body['content'])) {
+            return null;
+        }
+        foreach ($body['content'] as $block) {
+            if (isset($block['type']) && $block['type'] === 'text' && isset($block['text'])) {
+                return $block['text'];
+            }
+        }
+        return null;
     }
 
     /**
@@ -6995,6 +7016,7 @@ Do not include a title.
             ),
             'body' => json_encode(array(
                 'model' => 'claude-sonnet-5',
+                'thinking' => array('type' => 'disabled'),
                 'max_tokens' => 2048, // More tokens for longer editorial
                 'messages' => array(
                     array(
@@ -7012,15 +7034,14 @@ Do not include a title.
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        $text = $this->extract_api_text($body);
 
-        if (!isset($body['content'][0]['text'])) {
+        if ($text === null) {
             $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI response missing content';
             error_log('EnviroLink: ' . $api_error);
             $this->notify_api_failure('Roundup generation: ' . $api_error);
             return false;
         }
-
-        $text = $body['content'][0]['text'];
 
         // Parse response
         if (preg_match('/CONTENT:\s*(.+)$/s', $text, $content_match)) {
@@ -7112,6 +7133,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             ),
             'body' => json_encode(array(
                 'model' => 'claude-sonnet-5',
+                'thinking' => array('type' => 'disabled'),
                 'max_tokens' => 1024,
                 'messages' => array(
                     array(
@@ -7130,16 +7152,15 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        $text = $this->extract_api_text($body);
 
-        if (!isset($body['content'][0]['text'])) {
+        if ($text === null) {
             $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI metadata response missing content';
             $this->log_message('✗ ' . $api_error);
             error_log('EnviroLink: AI metadata: ' . $api_error);
             $this->notify_api_failure('Roundup metadata: ' . $api_error);
             return false;
         }
-
-        $text = $body['content'][0]['text'];
 
         // Parse JSON response
         // Remove markdown code blocks if present
