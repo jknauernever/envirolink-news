@@ -255,6 +255,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.54.3** (2026-08-12) - FIX: Keyword daily limit broken by UTC/local timezone mismatch (eclipse-glasses flood)
+
+- **Symptom:** Four near-identical solar-eclipse-glasses stories published in one evening despite the keyword daily limit (default 2 per topic per day).
+- **Root cause:** `check_keyword_daily_limit()` built the "today" window with PHP `date('Y-m-d 00:00:00')`. WordPress pins PHP's timezone to UTC, but `post_date` (what `date_query` compares against) is stored in the site's LOCAL time. After ~8pm ET, UTC has rolled to the next day, so the query asked for posts "after tomorrow midnight (local)", matched nothing, and every same-topic article passed the check. Evening manual runs and any late-window cron runs were affected; the limit silently did nothing.
+- **Fix:** `$today_start = current_time('Y-m-d') . ' 00:00:00'` — WordPress local time, matching post_date semantics (line ~3585).
+- **Rule of thumb for this codebase:** any comparison against `post_date` must use `current_time()`, never bare `date()`/`time()`. (Bare `date()` is fine for display or for comparing UTC-to-UTC values.)
+- **Note:** even with the fix, up to 2 same-topic articles per day publish by design — the limit is configurable in Settings ("Keyword Daily Limit").
+
 **v1.54.2** (2026-08-12) - FIX: Run All Feeds / Run Feed buttons now run in the background (web-server timeout killed long runs)
 
 - **Symptom:** After v1.54.1 made articles publish successfully, "Run All Feeds" showed `✗ Error occurred` and the log froze mid-article (last line "→ Sending to AI..."). Posts created before the freeze were real and live.
