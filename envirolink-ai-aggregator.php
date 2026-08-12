@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.54.2
+ * Version: 1.54.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.54.2');
+define('ENVIROLINK_VERSION', '1.54.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3581,8 +3581,13 @@ class EnviroLink_AI_Aggregator {
         // Get the daily limit from settings (default: 2)
         $daily_limit = get_option('envirolink_keyword_daily_limit', 2);
 
-        // Check posts from today (same calendar date)
-        $today_start = date('Y-m-d 00:00:00');
+        // Check posts from today (same calendar date, in the SITE's timezone).
+        // Must use current_time(), not date(): WordPress pins PHP to UTC, while
+        // post_date (which date_query compares against) is local time. With
+        // date(), any run after ~8pm ET looked for posts "after tomorrow
+        // midnight", matched nothing, and let unlimited same-topic articles
+        // through (the eclipse-glasses flood of 2026-08-11).
+        $today_start = current_time('Y-m-d') . ' 00:00:00';
 
         $recent_posts = get_posts(array(
             'post_type' => 'post',
