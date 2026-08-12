@@ -1,0 +1,47 @@
+name: Publish Plugin Release
+
+# Creates the git tag + GitHub release that the plugin's built-in update
+# checker (Plugin Update Checker, configured in envirolink-ai-aggregator.php)
+# watches. Publishing a release here is what makes "Check for Updates" in
+# WordPress admin offer the new version.
+#
+# Run it from the Actions tab (workflow_dispatch) after merging a version
+# bump to main. The version input must match the Version header in
+# envirolink-ai-aggregator.php — the job fails on mismatch so a release can
+# never point at code that reports a different version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version incl. leading v (e.g. v1.54.0). Must match the plugin's Version header on main."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify version matches plugin header
+        run: |
+          PLUGIN_VERSION=$(sed -n 's/^ \* Version: *//p' envirolink-ai-aggregator.php | head -1 | tr -d '[:space:]')
+          INPUT_VERSION="${{ inputs.version }}"
+          echo "Plugin header: v${PLUGIN_VERSION} — requested: ${INPUT_VERSION}"
+          if [ "v${PLUGIN_VERSION}" != "${INPUT_VERSION}" ]; then
+            echo "::error::Version mismatch — update the plugin header or the input" >&2
+            exit 1
+          fi
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.version }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ inputs.version }}" \
+            --generate-notes
