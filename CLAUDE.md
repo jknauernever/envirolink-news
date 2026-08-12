@@ -255,6 +255,15 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.54.0** (2026-08-12) - CRITICAL FIX: Replace retired Claude model + API failure email alerts
+
+- **Symptom:** No new articles published since June 15, 2026. Cron ran normally, feeds were fetched, but every article was silently skipped.
+- **Root cause:** All four Anthropic API calls were pinned to `claude-sonnet-4-20250514`, which Anthropic retired on June 15, 2026. After retirement the API returns a 404 error body with no `content` field; `rewrite_with_ai()`'s only failure handling was `if (!isset($body['content'][0]['text'])) return false;` and the caller did `if (!$rewritten) continue;` — no log entry, no alert, every article dropped for two months.
+- **Fix 1 — model swap:** All four call sites now use `claude-sonnet-5` (Anthropic's designated replacement): `rewrite_with_ai()`, `fix_single_headline_with_ai()`, roundup content generation, and roundup metadata generation. No other request changes needed (same Messages API shape).
+- **Fix 2 — visible errors:** `rewrite_with_ai()` error paths now log the API's own error message (e.g. "model: claude-sonnet-4-20250514 not found") to the admin progress log and PHP error_log instead of failing silently. Roundup error paths surface the API error message too.
+- **Fix 3 — email alerts:** New `notify_api_failure()` method emails josh@knauernever.com when any AI API call fails (model retired again, invalid/depleted API key, Anthropic outage). Throttled to one email per 24 hours via the `envirolink_api_failure_notified` transient so a fully-broken run doesn't send hundreds of emails. Wired into `rewrite_with_ai()` and both roundup AI calls.
+- **Lesson / future maintenance:** Anthropic retires dated model snapshots (~1 year lifecycle). When the alert email fires with a "model not found" error, update the model ID in all API call sites (grep for `'model' =>`) per https://platform.claude.com/docs/en/about-claude/models/overview
+
 **v1.53.0** (2026-05-16) - Strip placeholder tokens from attachment caption + description
 
 - **Symptom:** Every published article showed the literal text `#image_title` below its featured image (Blocksy `ct-media-container`).

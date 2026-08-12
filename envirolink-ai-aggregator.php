@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.53.0
+ * Version: 1.54.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.53.0');
+define('ENVIROLINK_VERSION', '1.54.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -4597,7 +4597,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                 'anthropic-version' => '2023-06-01'
             ),
             'body' => json_encode(array(
-                'model' => 'claude-sonnet-4-20250514',
+                'model' => 'claude-sonnet-5',
                 'max_tokens' => 200,
                 'messages' => array(
                     array(
@@ -6369,7 +6369,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
                 'anthropic-version' => '2023-06-01'
             ),
             'body' => json_encode(array(
-                'model' => 'claude-sonnet-4-20250514',
+                'model' => 'claude-sonnet-5',
                 'max_tokens' => 1024,
                 'messages' => array(
                     array(
@@ -6381,15 +6381,30 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         ));
         
         if (is_wp_error($response)) {
+            $error_message = 'AI API request failed: ' . $response->get_error_message();
+            $this->log_message('  ✗ ' . $error_message);
+            error_log('EnviroLink: ' . $error_message);
+            $this->notify_api_failure($error_message);
             return false;
         }
-        
+
         $body = json_decode(wp_remote_retrieve_body($response), true);
-        
+
         if (!isset($body['content'][0]['text'])) {
+            // Surface the API's own error (e.g. "model not found" after a model
+            // retirement — the cause of the silent June 2026 outage) instead of
+            // silently skipping the article.
+            $http_code = wp_remote_retrieve_response_code($response);
+            $api_error = isset($body['error']['message'])
+                ? $body['error']['message']
+                : 'Unexpected API response (HTTP ' . $http_code . ')';
+            $error_message = 'AI API error: ' . $api_error;
+            $this->log_message('  ✗ ' . $error_message);
+            error_log('EnviroLink: ' . $error_message);
+            $this->notify_api_failure($error_message);
             return false;
         }
-        
+
         $text = $body['content'][0]['text'];
         
         // Parse response
@@ -6421,6 +6436,32 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         }
 
         return false;
+    }
+
+    /**
+     * Email an alert when the Anthropic API fails (model retired, bad key, outage).
+     * Throttled to one email per 24 hours via transient so a fully-broken run
+     * (every article failing) doesn't flood the inbox.
+     */
+    private function notify_api_failure($error_message) {
+        if (get_transient('envirolink_api_failure_notified')) {
+            return;
+        }
+        set_transient('envirolink_api_failure_notified', time(), DAY_IN_SECONDS);
+
+        $subject = '[EnviroLink] AI aggregator API failure - articles are NOT being published';
+        $body = "The EnviroLink AI News Aggregator failed to get a valid response from the Anthropic API.\n\n"
+            . "Error: {$error_message}\n\n"
+            . "Until this is fixed, fetched articles are being skipped and no new posts will be published.\n\n"
+            . "Most likely causes:\n"
+            . "- The Claude model ID used by the plugin was deprecated or retired (this caused the June 2026 outage). Check https://platform.claude.com/docs/en/about-claude/models/overview and update the model in envirolink-ai-aggregator.php\n"
+            . "- The Anthropic API key is invalid or out of credit\n"
+            . "- A temporary Anthropic outage: https://status.anthropic.com\n\n"
+            . "Site: " . home_url() . "\n"
+            . "Time: " . current_time('mysql') . "\n\n"
+            . "This alert is sent at most once per 24 hours while the failure persists.";
+
+        wp_mail('josh@knauernever.com', $subject, $body);
     }
 
     /**
@@ -6953,7 +6994,7 @@ Do not include a title.
                 'anthropic-version' => '2023-06-01'
             ),
             'body' => json_encode(array(
-                'model' => 'claude-sonnet-4-20250514',
+                'model' => 'claude-sonnet-5',
                 'max_tokens' => 2048, // More tokens for longer editorial
                 'messages' => array(
                     array(
@@ -6966,13 +7007,16 @@ Do not include a title.
 
         if (is_wp_error($response)) {
             error_log('EnviroLink: AI API error: ' . $response->get_error_message());
+            $this->notify_api_failure('Roundup generation: ' . $response->get_error_message());
             return false;
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if (!isset($body['content'][0]['text'])) {
-            error_log('EnviroLink: AI response missing content');
+            $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI response missing content';
+            error_log('EnviroLink: ' . $api_error);
+            $this->notify_api_failure('Roundup generation: ' . $api_error);
             return false;
         }
 
@@ -7067,7 +7111,7 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
                 'anthropic-version' => '2023-06-01'
             ),
             'body' => json_encode(array(
-                'model' => 'claude-sonnet-4-20250514',
+                'model' => 'claude-sonnet-5',
                 'max_tokens' => 1024,
                 'messages' => array(
                     array(
@@ -7081,14 +7125,17 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         if (is_wp_error($response)) {
             $this->log_message('✗ AI metadata generation failed: ' . $response->get_error_message());
             error_log('EnviroLink: AI metadata generation error: ' . $response->get_error_message());
+            $this->notify_api_failure('Roundup metadata: ' . $response->get_error_message());
             return false;
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if (!isset($body['content'][0]['text'])) {
-            $this->log_message('✗ AI response missing content');
-            error_log('EnviroLink: AI metadata response missing content');
+            $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI metadata response missing content';
+            $this->log_message('✗ ' . $api_error);
+            error_log('EnviroLink: AI metadata: ' . $api_error);
+            $this->notify_api_failure('Roundup metadata: ' . $api_error);
             return false;
         }
 
