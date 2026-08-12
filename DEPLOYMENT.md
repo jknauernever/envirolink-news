@@ -1,5 +1,16 @@
 # Automated Deployment Setup
 
+> ## ⚠️ OBSOLETE — this SFTP pipeline no longer exists (as of 2026-08-12)
+>
+> The SFTP workflow described below was removed from the repo; its last runs (October 2025) all failed. **Merging to `main` does not deploy anything.**
+>
+> **Current deploy process** (see CLAUDE.md → Deployment for full detail):
+> 1. Bump the version in `envirolink-ai-aggregator.php` (header + `ENVIROLINK_VERSION`) and merge to `main`
+> 2. Run the **"Publish Plugin Release"** workflow (Actions tab → `release.yml`) with the version, e.g. `v1.54.0` — it creates the tag + GitHub release the plugin's update checker watches
+> 3. In WordPress admin: EnviroLink News → Check for Updates → Update Now → Run All Feeds
+>
+> The rest of this document is kept only as historical reference for reviving SFTP deployment.
+
 This guide will help you set up automated deployment from GitHub to your WordPress server.
 
 ## How It Works
