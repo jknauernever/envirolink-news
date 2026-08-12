@@ -255,6 +255,14 @@ Update the 'model' parameter in the API request body in `rewrite_with_ai` method
 
 ## Recent Version History
 
+**v1.54.1** (2026-08-12) - FIX: Parse claude-sonnet-5 responses (thinking blocks broke content[0] assumption)
+
+- **Symptom:** After the v1.54.0 model swap, every article failed with `✗ AI API error: Unexpected API response (HTTP 200)` — the API call succeeded but parsing failed.
+- **Root cause:** `claude-sonnet-5` runs **adaptive thinking by default** when the request omits the `thinking` parameter (unlike the retired claude-sonnet-4, where omitting it meant no thinking). The response's `content` array then starts with a `{"type":"thinking",...}` block and the text lands in `content[1]`, but all four call sites read `$body['content'][0]['text']`.
+- **Fix 1:** All four API requests now send `'thinking' => array('type' => 'disabled')` — this rewriting task doesn't need thinking, and with thinking on, `max_tokens` (1024) caps thinking + text *combined*, risking truncated articles.
+- **Fix 2:** New `extract_api_text($body)` helper scans `content[]` for the first `type === 'text'` block instead of assuming position 0. Used by all four call sites — defense in depth if a future model changes response shape again.
+- **Lesson:** When swapping to a newer Claude model, check the model's *default* thinking behavior, not just the model ID. On claude-sonnet-5+ an omitted `thinking` parameter means thinking is ON.
+
 **v1.54.0** (2026-08-12) - CRITICAL FIX: Replace retired Claude model + API failure email alerts
 
 - **Symptom:** No new articles published since June 15, 2026. Cron ran normally, feeds were fetched, but every article was silently skipped.
