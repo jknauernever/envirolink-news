@@ -177,12 +177,14 @@ The plugin is designed to be uploaded via WordPress admin:
 
 ## Important Technical Details
 
-### Anthropic API Integration
+### AI Provider Integration (v1.55.0+)
 
-- API endpoint: `https://api.anthropic.com/v1/messages`
-- Version header: `anthropic-version: 2023-06-01`
-- Timeout: 60 seconds
-- Response parsing relies on specific format markers in AI output
+All AI calls go through `call_llm($prompt, $max_tokens, $timeout, $system)`. The provider is a setting (EnviroLink News → Settings → AI Provider):
+- **Anthropic:** `https://api.anthropic.com/v1/messages`, `anthropic-version: 2023-06-01`, key in `envirolink_api_key`, model in `envirolink_anthropic_model` (default `claude-sonnet-5`), thinking disabled, text read via `extract_api_text()`.
+- **OpenAI-compatible:** `POST {envirolink_llm_base_url}/chat/completions` with `envirolink_llm_api_key` and `envirolink_llm_model`. Sends `max_completion_tokens` (newer OpenAI models reject `max_tokens`) with +2048 headroom for reasoning tokens, plus optional `envirolink_llm_reasoning_effort`. Works with OpenAI, Groq and Gemini's OpenAI-compatible endpoint.
+- Returns text or a `WP_Error` (code `llm_http_<status>` for HTTP errors). Callers log it and call `notify_api_failure()`.
+- `accuracy_rules()` (anti-fabrication) and `human_style_rules()` (no stock AI phrasing) are sent as the system prompt for article rewrites and roundups; the roundup metadata call gets `accuracy_rules()` only.
+- Response parsing still relies on the TITLE:/CONTENT:/IMAGE_KEYWORDS: markers; `call_llm` strips markdown bold around them.
 
 ### WordPress Security
 
@@ -250,10 +252,19 @@ if ($locations) {
 ?>
 ```
 
-### Changing Claude Model
-Update the 'model' parameter in the API request body in `rewrite_with_ai` method (line ~2100).
+### Changing the AI Model or Provider
+No code change needed: set the provider, base URL, key and model in EnviroLink News → Settings.
 
 ## Recent Version History
+
+**v1.55.0** (2026-10-12) - Provider layer: switch AI providers from Settings (Anthropic API account suspended)
+
+- **Why:** The Anthropic API organization behind the plugin was suspended on 2026-10-04 (review pending). Publishing needed another provider, with a settings-only path back to Anthropic.
+- **Provider layer:** New `call_llm()` routes all four AI calls (article rewrite, roundup, roundup metadata, headline fix). Anthropic path keeps v1.54.x behavior (`claude-sonnet-5`, thinking disabled, `extract_api_text()`). OpenAI-compatible path covers OpenAI, Groq, Gemini.
+- **Model choice (tested 2026-10-12 on the same articles and the Oct 3 roundup input):** OpenAI `gpt-6-luna` chosen: accurate names/quotes, no stock AI phrasing, ~$0.65/month estimated. `gpt-6.1-sol` writes best (~$12/month). Groq `gpt-oss-120b` misspelled names, invented a quote and read as AI-written. Gemini 3.8 Flash good but slow and pricier.
+- **Anti-fabrication + human style:** New `accuracy_rules()` and `human_style_rules()` sent as the system prompt. Claude followed these implicitly; other models invented quotes without them. Roundup prompt no longer requires formulaic cue phrases ("a common thread emerges", "all eyes will be on").
+- **Robustness:** strips `**TITLE:**`-style markdown, normalizes U+2011/U+202F, accepts `\'` in metadata JSON, failure email names the active provider.
+- **New options:** `envirolink_llm_provider`, `envirolink_anthropic_model`, `envirolink_llm_base_url`, `envirolink_llm_api_key`, `envirolink_llm_model`, `envirolink_llm_reasoning_effort`.
 
 **v1.54.3** (2026-08-12) - FIX: Keyword daily limit broken by UTC/local timezone mismatch (eclipse-glasses flood)
 
