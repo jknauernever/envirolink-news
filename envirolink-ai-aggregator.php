@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.54.3
+ * Version: 1.55.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.54.3');
+define('ENVIROLINK_VERSION', '1.55.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -283,6 +283,12 @@ class EnviroLink_AI_Aggregator {
     public function register_settings() {
         register_setting('envirolink_settings', 'envirolink_feeds');
         register_setting('envirolink_settings', 'envirolink_api_key');
+        register_setting('envirolink_settings', 'envirolink_llm_provider');
+        register_setting('envirolink_settings', 'envirolink_anthropic_model');
+        register_setting('envirolink_settings', 'envirolink_llm_base_url');
+        register_setting('envirolink_settings', 'envirolink_llm_api_key');
+        register_setting('envirolink_settings', 'envirolink_llm_model');
+        register_setting('envirolink_settings', 'envirolink_llm_reasoning_effort');
         register_setting('envirolink_settings', 'envirolink_pexels_api_key');
         register_setting('envirolink_settings', 'envirolink_post_category');
         register_setting('envirolink_settings', 'envirolink_post_status');
@@ -326,6 +332,13 @@ class EnviroLink_AI_Aggregator {
             check_admin_referer('envirolink_settings');
 
             update_option('envirolink_api_key', sanitize_text_field($_POST['api_key']));
+            update_option('envirolink_llm_provider', (isset($_POST['llm_provider']) && $_POST['llm_provider'] === 'openai_compatible') ? 'openai_compatible' : 'anthropic');
+            update_option('envirolink_anthropic_model', sanitize_text_field($_POST['anthropic_model']));
+            update_option('envirolink_llm_base_url', esc_url_raw(trim($_POST['llm_base_url'])));
+            update_option('envirolink_llm_api_key', sanitize_text_field($_POST['llm_api_key']));
+            update_option('envirolink_llm_model', sanitize_text_field($_POST['llm_model']));
+            $reasoning_effort = isset($_POST['llm_reasoning_effort']) ? sanitize_text_field($_POST['llm_reasoning_effort']) : '';
+            update_option('envirolink_llm_reasoning_effort', in_array($reasoning_effort, array('low', 'medium', 'high'), true) ? $reasoning_effort : '');
             update_option('envirolink_pexels_api_key', sanitize_text_field($_POST['pexels_api_key']));
             update_option('envirolink_post_category', absint($_POST['post_category']));
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
@@ -438,6 +451,8 @@ class EnviroLink_AI_Aggregator {
         }
         
         $api_key = get_option('envirolink_api_key', '');
+        $llm_provider = get_option('envirolink_llm_provider', 'anthropic');
+        $active_llm_key = $this->get_llm_api_key();
         $post_category = get_option('envirolink_post_category', '');
         $post_status = get_option('envirolink_post_status', 'publish');
         $update_existing = get_option('envirolink_update_existing', 'no');
@@ -488,7 +503,8 @@ class EnviroLink_AI_Aggregator {
                         <tr>
                             <th>API Key Status:</th>
                             <td>
-                                <?php if (!empty($api_key)): ?>
+                                <?php echo $llm_provider === 'openai_compatible' ? 'OpenAI-compatible' : 'Anthropic'; ?>:
+                                <?php if (!empty($active_llm_key)): ?>
                                     <span style="color: green;">✓ Configured</span>
                                 <?php else: ?>
                                     <span style="color: red;">✗ Not configured</span>
@@ -665,6 +681,19 @@ class EnviroLink_AI_Aggregator {
                     <table class="form-table">
                         <tr>
                             <th scope="row">
+                                <label for="llm_provider">AI Provider</label>
+                            </th>
+                            <td>
+                                <select id="llm_provider" name="llm_provider">
+                                    <option value="anthropic" <?php selected($llm_provider, 'anthropic'); ?>>Anthropic</option>
+                                    <option value="openai_compatible" <?php selected($llm_provider, 'openai_compatible'); ?>>OpenAI-compatible (Groq, Gemini, etc.)</option>
+                                </select>
+                                <p class="description">Used for article rewrites, daily roundups and headline fixes.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
                                 <label for="api_key">Anthropic API Key</label>
                             </th>
                             <td>
@@ -674,6 +703,67 @@ class EnviroLink_AI_Aggregator {
                                 <p class="description">
                                     Get your API key from <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
                                 </p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="anthropic_model">Anthropic Model</label>
+                            </th>
+                            <td>
+                                <input type="text" id="anthropic_model" name="anthropic_model"
+                                       value="<?php echo esc_attr(get_option('envirolink_anthropic_model', 'claude-sonnet-5')); ?>"
+                                       class="regular-text" />
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="llm_base_url">OpenAI-compatible Base URL</label>
+                            </th>
+                            <td>
+                                <input type="url" id="llm_base_url" name="llm_base_url"
+                                       value="<?php echo esc_attr(get_option('envirolink_llm_base_url', '')); ?>"
+                                       class="regular-text" placeholder="https://api.groq.com/openai/v1" />
+                                <p class="description">Requests go to <code>{base URL}/chat/completions</code>.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="llm_api_key">OpenAI-compatible API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="llm_api_key" name="llm_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_llm_api_key', '')); ?>"
+                                       class="regular-text" />
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="llm_model">OpenAI-compatible Model</label>
+                            </th>
+                            <td>
+                                <input type="text" id="llm_model" name="llm_model"
+                                       value="<?php echo esc_attr(get_option('envirolink_llm_model', '')); ?>"
+                                       class="regular-text" placeholder="openai/gpt-oss-120b" />
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="llm_reasoning_effort">Reasoning Effort</label>
+                            </th>
+                            <td>
+                                <?php $llm_reasoning_effort = get_option('envirolink_llm_reasoning_effort', ''); ?>
+                                <select id="llm_reasoning_effort" name="llm_reasoning_effort">
+                                    <option value="" <?php selected($llm_reasoning_effort, ''); ?>>Not sent (provider default)</option>
+                                    <option value="low" <?php selected($llm_reasoning_effort, 'low'); ?>>Low</option>
+                                    <option value="medium" <?php selected($llm_reasoning_effort, 'medium'); ?>>Medium</option>
+                                    <option value="high" <?php selected($llm_reasoning_effort, 'high'); ?>>High</option>
+                                </select>
+                                <p class="description">For reasoning models such as gpt-oss. Low is recommended for Groq gpt-oss-120b. Leave as "Not sent" for models that don't support it.</p>
                             </td>
                         </tr>
 
@@ -4638,7 +4728,7 @@ class EnviroLink_AI_Aggregator {
      * Fix capitalization for a single headline using lightweight AI call
      * Returns fixed headline or false on error
      */
-    private function fix_single_headline_with_ai($headline, $api_key) {
+    private function fix_single_headline_with_ai($headline) {
         $prompt = "Fix the capitalization of this news headline using Title Case:
 
 HEADLINE: {$headline}
@@ -4659,38 +4749,13 @@ Examples:
 
 Return ONLY the corrected headline, nothing else. If the headline is already correct, return it exactly as-is.";
 
-        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
-            'timeout' => 30,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'x-api-key' => $api_key,
-                'anthropic-version' => '2023-06-01'
-            ),
-            'body' => json_encode(array(
-                'model' => 'claude-sonnet-5',
-                'thinking' => array('type' => 'disabled'),
-                'max_tokens' => 200,
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $prompt
-                    )
-                )
-            ))
-        ));
+        $text = $this->call_llm($prompt, 200, 30);
 
-        if (is_wp_error($response)) {
+        if (is_wp_error($text)) {
             return false;
         }
 
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $headline_text = $this->extract_api_text($body);
-
-        if ($headline_text === null) {
-            return false;
-        }
-
-        $ai_headline = trim($headline_text);
+        $ai_headline = trim($text);
 
         // Apply post-processing to force-capitalize known terms
         $final_headline = $this->force_capitalize_known_terms($ai_headline);
@@ -5036,7 +5101,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         @ini_set('memory_limit', '256M');     // 256MB RAM
         @set_time_limit(900);
 
-        $api_key = get_option('envirolink_api_key');
+        $api_key = $this->get_llm_api_key();
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
         $post_status = get_option('envirolink_post_status', 'publish');
@@ -5351,7 +5416,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                 // Rewrite using AI (unless we only need image)
                 $rewritten = null;
                 if ($needs_ai_update) {
-                    $rewritten = $this->rewrite_with_ai($original_title, $original_text, $api_key);
+                    $rewritten = $this->rewrite_with_ai($original_title, $original_text);
 
                     if (!$rewritten) {
                         continue;
@@ -6389,9 +6454,163 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
     }
 
     /**
-     * Rewrite content using Anthropic API
+     * API key for the active AI provider ('anthropic' uses the original envirolink_api_key option)
      */
-    private function rewrite_with_ai($title, $content, $api_key) {
+    private function get_llm_api_key() {
+        if (get_option('envirolink_llm_provider', 'anthropic') === 'openai_compatible') {
+            return get_option('envirolink_llm_api_key', '');
+        }
+        return get_option('envirolink_api_key', '');
+    }
+
+    /**
+     * Send a single-turn prompt to the configured AI provider.
+     * Returns the response text, or WP_Error (code 'llm_http_<status>' for HTTP errors, so callers can spot 429s).
+     */
+    private function call_llm($prompt, $max_tokens, $timeout = 60, $system = '') {
+        $provider = get_option('envirolink_llm_provider', 'anthropic');
+        $api_key = $this->get_llm_api_key();
+
+        if (empty($api_key)) {
+            return new WP_Error('llm_no_key', 'AI provider API key not configured');
+        }
+
+        if ($provider === 'openai_compatible') {
+            $base_url = rtrim(get_option('envirolink_llm_base_url', ''), '/');
+            $model = get_option('envirolink_llm_model', '');
+            if (empty($base_url) || empty($model)) {
+                return new WP_Error('llm_not_configured', 'OpenAI-compatible base URL or model not configured');
+            }
+
+            $messages = array();
+            if ($system !== '') {
+                $messages[] = array('role' => 'system', 'content' => $system);
+            }
+            $messages[] = array('role' => 'user', 'content' => $prompt);
+
+            // Reasoning models (e.g. gpt-oss) spend hidden "thinking" tokens out of max_tokens before
+            // writing the answer, so add headroom. Only tokens actually generated are billed.
+            // max_completion_tokens (not max_tokens): newer OpenAI models reject max_tokens,
+            // and Groq and Gemini accept either
+            $request = array(
+                'model' => $model,
+                'max_completion_tokens' => $max_tokens + 2048,
+                'messages' => $messages
+            );
+            $reasoning_effort = get_option('envirolink_llm_reasoning_effort', '');
+            if (in_array($reasoning_effort, array('low', 'medium', 'high'), true)) {
+                $request['reasoning_effort'] = $reasoning_effort;
+            }
+
+            $url = $base_url . '/chat/completions';
+            $args = array(
+                'timeout' => $timeout,
+                'headers' => array(
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key
+                ),
+                'body' => json_encode($request)
+            );
+        } else {
+            $provider = 'anthropic';
+            $model = get_option('envirolink_anthropic_model', '');
+            if (empty($model)) {
+                $model = 'claude-sonnet-5';
+            }
+
+            $request = array(
+                'model' => $model,
+                'thinking' => array('type' => 'disabled'),
+                'max_tokens' => $max_tokens,
+                'messages' => array(
+                    array('role' => 'user', 'content' => $prompt)
+                )
+            );
+            if ($system !== '') {
+                $request['system'] = $system;
+            }
+
+            $url = 'https://api.anthropic.com/v1/messages';
+            $args = array(
+                'timeout' => $timeout,
+                'headers' => array(
+                    'Content-Type' => 'application/json',
+                    'x-api-key' => $api_key,
+                    'anthropic-version' => '2023-06-01'
+                ),
+                'body' => json_encode($request)
+            );
+        }
+
+        $response = wp_remote_post($url, $args);
+        $label = $provider . '/' . $model;
+
+        if (is_wp_error($response)) {
+            error_log('EnviroLink: AI request failed (' . $label . '): ' . $response->get_error_message());
+            return new WP_Error('llm_request_failed', $label . ': ' . $response->get_error_message());
+        }
+
+        $status = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($status < 200 || $status >= 300) {
+            $detail = isset($body['error']['message']) ? $body['error']['message'] : substr(wp_remote_retrieve_body($response), 0, 200);
+            error_log('EnviroLink: AI HTTP ' . $status . ' (' . $label . '): ' . $detail);
+            return new WP_Error('llm_http_' . $status, $label . ' HTTP ' . $status . ': ' . $detail);
+        }
+
+        if ($provider === 'openai_compatible') {
+            $text = isset($body['choices'][0]['message']['content']) ? $body['choices'][0]['message']['content'] : null;
+        } else {
+            $text = $this->extract_api_text($body);
+        }
+
+        if (!is_string($text) || trim($text) === '') {
+            error_log('EnviroLink: AI response missing text (' . $label . ')');
+            return new WP_Error('llm_empty', $label . ': response missing text');
+        }
+
+        // Some models wrap the TITLE:/CONTENT:/IMAGE_KEYWORDS: markers in markdown bold, which breaks parsing
+        $text = preg_replace('/\*\*(TITLE|CONTENT|IMAGE_KEYWORDS):\*\*/', '$1:', $text);
+        // Replace non-breaking hyphens (U+2011) and narrow no-break spaces (U+202F) with plain characters
+        $text = str_replace(array("\u{2011}", "\u{202F}"), array('-', ' '), $text);
+
+        return $text;
+    }
+
+    /**
+     * Anti-fabrication rules shared by every AI prompt that writes reader-facing copy.
+     * Claude followed these implicitly; other models need them spelled out.
+     */
+    private function accuracy_rules() {
+        return "Accuracy rules (these override every other instruction):
+- Use ONLY facts that appear in the source material provided above. Do not add background facts, statistics, dates, or context from your own knowledge.
+- NEVER invent or paraphrase-into-quotes anything a person said. Only use a direct quote if it appears word for word in the source material, and attribute it to the same person.
+- NEVER invent names, ages, job titles, places, organizations, numbers, or study findings. Spell names exactly as the source does.
+- Do not attribute an action or statement to the wrong person, place, or organization. Keep who-did-what exactly as in the source.
+- Do not overstate certainty or scale. If the source says \"may\" or \"could\", do not write \"will\". Do not add superlatives the source doesn't use.
+- If a detail is unclear in the source, leave it out rather than guess.";
+    }
+
+    /**
+     * Writing rules shared by the article and roundup prompts, to keep copy free of
+     * stock AI phrasing so it reads like a human editor wrote it
+     */
+    private function human_style_rules() {
+        return "Write like an experienced human news editor, not like an AI assistant:
+- Do NOT use these words or phrases: underscores, highlights, stark reminder, serves as a reminder, it's a reminder, a testament to, delve, tapestry, landscape (unless literal), pivotal, crucial, vital, navigate, in the face of, amid growing, paving the way, shed light on, a common thread emerges, all eyes will be on, only time will tell, in an era of, not just X but Y.
+- Do not end paragraphs with a summarizing moral or a sentence about what something \"illustrates\" or \"signals\". End on a fact, a detail, or what happens next.
+- Use em dashes sparingly: at most one in the whole piece. Prefer commas, periods, or parentheses.
+- Vary sentence length and openings. Do not start consecutive sentences or paragraphs the same way.
+- Prefer specific details (names, places, numbers from the source) over general statements.
+- Use plain words a reporter would use. Contractions are fine.
+- Do not use markdown formatting (no **bold**, no headings, no bullet lists).";
+    }
+
+    /**
+     * Rewrite content using the configured AI provider
+     */
+    private function rewrite_with_ai($title, $content) {
         $prompt = "You are a news editor for EnviroLink.org, an environmental news aggregation website. Your task is to rewrite the following environmental news article in a clear, engaging style while maintaining factual accuracy.
 
 Original Title: {$title}
@@ -6428,53 +6647,17 @@ Keep the core facts and maintain journalistic integrity. Make it informative and
 
 IMPORTANT: Do NOT include any attribution, source credit, or byline statements in the content. Do NOT add lines like \"This article was written by...\" or \"This is a summary of an article from...\" or any similar attribution. The article should read as original editorial content with no reference to its source.
 
+
 Format your response as:
 TITLE: [new headline]
 CONTENT: [rewritten content]
 IMAGE_KEYWORDS: [2-3 visual search terms]";
         
-        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
-            'timeout' => 60,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'x-api-key' => $api_key,
-                'anthropic-version' => '2023-06-01'
-            ),
-            'body' => json_encode(array(
-                'model' => 'claude-sonnet-5',
-                'thinking' => array('type' => 'disabled'),
-                'max_tokens' => 1024,
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $prompt
-                    )
-                )
-            ))
-        ));
+        $text = $this->call_llm($prompt, 1024, 60, $this->accuracy_rules() . "\n\n" . $this->human_style_rules());
         
-        if (is_wp_error($response)) {
-            $error_message = 'AI API request failed: ' . $response->get_error_message();
+        if (is_wp_error($text)) {
+            $error_message = 'AI API error: ' . $text->get_error_message();
             $this->log_message('  ✗ ' . $error_message);
-            error_log('EnviroLink: ' . $error_message);
-            $this->notify_api_failure($error_message);
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $text = $this->extract_api_text($body);
-
-        if ($text === null) {
-            // Surface the API's own error (e.g. "model not found" after a model
-            // retirement — the cause of the silent June 2026 outage) instead of
-            // silently skipping the article.
-            $http_code = wp_remote_retrieve_response_code($response);
-            $api_error = isset($body['error']['message'])
-                ? $body['error']['message']
-                : 'Unexpected API response (HTTP ' . $http_code . ')';
-            $error_message = 'AI API error: ' . $api_error;
-            $this->log_message('  ✗ ' . $error_message);
-            error_log('EnviroLink: ' . $error_message);
             $this->notify_api_failure($error_message);
             return false;
         }
@@ -6530,7 +6713,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
     }
 
     /**
-     * Email an alert when the Anthropic API fails (model retired, bad key, outage).
+     * Email an alert when the AI provider fails (model retired, bad key, out of credit, outage).
      * Throttled to one email per 24 hours via transient so a fully-broken run
      * (every article failing) doesn't flood the inbox.
      */
@@ -6540,14 +6723,18 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         }
         set_transient('envirolink_api_failure_notified', time(), DAY_IN_SECONDS);
 
+        $provider = get_option('envirolink_llm_provider', 'anthropic') === 'openai_compatible'
+            ? 'OpenAI-compatible provider (' . get_option('envirolink_llm_base_url', '') . ', model ' . get_option('envirolink_llm_model', '') . ')'
+            : 'Anthropic API';
+
         $subject = '[EnviroLink] AI aggregator API failure - articles are NOT being published';
-        $body = "The EnviroLink AI News Aggregator failed to get a valid response from the Anthropic API.\n\n"
+        $body = "The EnviroLink AI News Aggregator failed to get a valid response from the {$provider}.\n\n"
             . "Error: {$error_message}\n\n"
             . "Until this is fixed, fetched articles are being skipped and no new posts will be published.\n\n"
             . "Most likely causes:\n"
-            . "- The Claude model ID used by the plugin was deprecated or retired (this caused the June 2026 outage). Check https://platform.claude.com/docs/en/about-claude/models/overview and update the model in envirolink-ai-aggregator.php\n"
-            . "- The Anthropic API key is invalid or out of credit\n"
-            . "- A temporary Anthropic outage: https://status.anthropic.com\n\n"
+            . "- The model ID in EnviroLink News -> Settings was deprecated or retired (this caused the June 2026 outage)\n"
+            . "- The API key is invalid, or the account is out of credit or over its spend limit\n"
+            . "- A temporary outage at the AI provider\n\n"
             . "Site: " . home_url() . "\n"
             . "Time: " . current_time('mysql') . "\n\n"
             . "This alert is sent at most once per 24 hours while the failure persists.";
@@ -6669,12 +6856,12 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
 
         // Step 3: Generate editorial content with AI
         $this->log_message('');
-        $this->log_message('STEP 3: Generating roundup content with Claude AI...');
+        $this->log_message('STEP 3: Generating roundup content with AI...');
         $this->update_progress(array('percent' => 50, 'message' => 'Generating content with AI...'));
 
-        $api_key = get_option('envirolink_api_key');
+        $api_key = $this->get_llm_api_key();
         if (empty($api_key)) {
-            $this->log_message('✗ Cannot generate roundup - Anthropic API key not configured');
+            $this->log_message('✗ Cannot generate roundup - AI provider API key not configured');
             $this->update_progress(array(
                 'status' => 'error',
                 'message' => 'API key missing',
@@ -6687,7 +6874,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
             return;
         }
 
-        $roundup_content = $this->generate_roundup_with_ai($article_summaries, $api_key);
+        $roundup_content = $this->generate_roundup_with_ai($article_summaries);
 
         if (!$roundup_content) {
             $this->log_message('✗ AI failed to generate roundup content');
@@ -6718,7 +6905,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
 
         // STEP 4a: Generate editorial metadata with AI (headline, dek, image_alt)
         $this->log_message('→ Attempting AI editorial metadata generation...');
-        $ai_metadata = $this->generate_roundup_metadata_with_ai($article_summaries, $api_key, $date_string);
+        $ai_metadata = $this->generate_roundup_metadata_with_ai($article_summaries, $date_string);
 
         // STEP 4b: Process AI metadata or fallback to simple format
         if ($ai_metadata && isset($ai_metadata['headline']) && isset($ai_metadata['dek'])) {
@@ -7003,7 +7190,7 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
     /**
      * Generate editorial roundup content using AI
      */
-    private function generate_roundup_with_ai($articles, $api_key) {
+    private function generate_roundup_with_ai($articles) {
         // Build the article list for the prompt
         $articles_text = '';
         foreach ($articles as $i => $article) {
@@ -7054,7 +7241,7 @@ Perspective: Observational and interpretive, not opinionated.
 
 Balance: Acknowledge complexity without manufacturing \"two sides.\" If genuine disagreement appears in sources, attribute it clearly and briefly.
 
-Language: Favor verbs of change — revealed, accelerated, signaled, deepened, challenged.
+Language: Plain, concrete verbs. Say what happened and to whom.
 
 Sentence flow: Mix short, clear sentences with occasional longer, reflective ones to create rhythm.
 
@@ -7065,51 +7252,13 @@ CONTENT: [your editorial roundup]
 
 Do not include a title.
 
-🕊️ Extra cue phrases the model should naturally use
+Stay within 600 words.";
 
-\"Across the stories today, a common thread emerges…\"
+        $text = $this->call_llm($prompt, 2048, 90, $this->accuracy_rules() . "\n\n" . $this->human_style_rules());
 
-\"The day's coverage points to growing momentum around…\"
-
-\"It's a reminder that progress and pressure often arrive together.\"
-
-\"Behind the numbers are real communities adapting in real time.\"
-
-\"As the week unfolds, all eyes will be on…\"";
-
-        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
-            'timeout' => 90, // Longer timeout for editorial content
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'x-api-key' => $api_key,
-                'anthropic-version' => '2023-06-01'
-            ),
-            'body' => json_encode(array(
-                'model' => 'claude-sonnet-5',
-                'thinking' => array('type' => 'disabled'),
-                'max_tokens' => 2048, // More tokens for longer editorial
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $prompt
-                    )
-                )
-            ))
-        ));
-
-        if (is_wp_error($response)) {
-            error_log('EnviroLink: AI API error: ' . $response->get_error_message());
-            $this->notify_api_failure('Roundup generation: ' . $response->get_error_message());
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $text = $this->extract_api_text($body);
-
-        if ($text === null) {
-            $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI response missing content';
-            error_log('EnviroLink: ' . $api_error);
-            $this->notify_api_failure('Roundup generation: ' . $api_error);
+        if (is_wp_error($text)) {
+            $this->log_message('✗ AI error: ' . $text->get_error_message());
+            $this->notify_api_failure('Roundup generation: ' . $text->get_error_message());
             return false;
         }
 
@@ -7126,7 +7275,7 @@ Do not include a title.
      * Generate editorial metadata (headline, dek, image_alt) for roundup using AI
      * Returns array with metadata or false on failure
      */
-    private function generate_roundup_metadata_with_ai($articles, $api_key, $date_string) {
+    private function generate_roundup_metadata_with_ai($articles, $date_string) {
         // Take top 3-5 stories for metadata generation
         $top_stories = array_slice($articles, 0, min(5, count($articles)));
 
@@ -7194,41 +7343,11 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
 
         $this->log_message('→ Generating editorial metadata with AI...');
 
-        $response = wp_remote_post('https://api.anthropic.com/v1/messages', array(
-            'timeout' => 60,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'x-api-key' => $api_key,
-                'anthropic-version' => '2023-06-01'
-            ),
-            'body' => json_encode(array(
-                'model' => 'claude-sonnet-5',
-                'thinking' => array('type' => 'disabled'),
-                'max_tokens' => 1024,
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $prompt
-                    )
-                )
-            ))
-        ));
+        $text = $this->call_llm($prompt, 1024, 60, $this->accuracy_rules());
 
-        if (is_wp_error($response)) {
-            $this->log_message('✗ AI metadata generation failed: ' . $response->get_error_message());
-            error_log('EnviroLink: AI metadata generation error: ' . $response->get_error_message());
-            $this->notify_api_failure('Roundup metadata: ' . $response->get_error_message());
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $text = $this->extract_api_text($body);
-
-        if ($text === null) {
-            $api_error = isset($body['error']['message']) ? $body['error']['message'] : 'AI metadata response missing content';
-            $this->log_message('✗ ' . $api_error);
-            error_log('EnviroLink: AI metadata: ' . $api_error);
-            $this->notify_api_failure('Roundup metadata: ' . $api_error);
+        if (is_wp_error($text)) {
+            $this->log_message('✗ AI metadata generation failed: ' . $text->get_error_message());
+            $this->notify_api_failure('Roundup metadata: ' . $text->get_error_message());
             return false;
         }
 
@@ -7236,6 +7355,8 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         // Remove markdown code blocks if present
         $text = preg_replace('/```json\s*|\s*```/', '', $text);
         $text = trim($text);
+        // Some models escape apostrophes as \' which is invalid JSON
+        $text = str_replace("\\'", "'", $text);
 
         $metadata = json_decode($text, true);
 
