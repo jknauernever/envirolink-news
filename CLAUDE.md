@@ -179,9 +179,13 @@ The plugin is designed to be uploaded via WordPress admin:
 
 ### AI Provider Integration (v1.55.0+)
 
-All AI calls go through `call_llm($prompt, $max_tokens, $timeout, $system)`. The provider is a setting (EnviroLink News → Settings → AI Provider):
-- **Anthropic:** `https://api.anthropic.com/v1/messages`, `anthropic-version: 2023-06-01`, key in `envirolink_api_key`, model in `envirolink_anthropic_model` (default `claude-sonnet-5`), thinking disabled, text read via `extract_api_text()`.
-- **OpenAI-compatible:** `POST {envirolink_llm_base_url}/chat/completions` with `envirolink_llm_api_key` and `envirolink_llm_model`. Sends `max_completion_tokens` (newer OpenAI models reject `max_tokens`) with +2048 headroom for reasoning tokens, plus optional `envirolink_llm_reasoning_effort`. Works with OpenAI, Groq and Gemini's OpenAI-compatible endpoint.
+All AI calls go through `call_llm($prompt, $max_tokens, $timeout, $system)`. The model is chosen in EnviroLink News → Settings → **AI Model** pulldown (`envirolink_llm_preset`), defined in `get_llm_presets()` and resolved by `get_llm_config()`:
+- Presets: `openai_luna` (GPT-6 Luna, default recommendation), `openai_sol` (GPT-6.1 Sol), `gemini_flash` (Gemini 3.8 Flash), `groq_gpt_oss` (gpt-oss-120b, reasoning effort medium), `anthropic`, `custom`.
+- One key option per company: `envirolink_openai_api_key`, `envirolink_gemini_api_key`, `envirolink_groq_api_key`, `envirolink_api_key` (Anthropic), `envirolink_llm_api_key` (Custom). Settings JS shows only the selected company's rows; hidden fields still submit, so other keys are kept.
+- **Anthropic:** `https://api.anthropic.com/v1/messages`, `anthropic-version: 2023-06-01`, model in `envirolink_anthropic_model` (default `claude-sonnet-5`), thinking disabled, text read via `extract_api_text()`.
+- **OpenAI-compatible presets and Custom:** `POST {base_url}/chat/completions`. Sends `max_completion_tokens` (newer OpenAI models reject `max_tokens`) with +2048 headroom for reasoning tokens, plus the preset's `reasoning_effort` if any. Custom reads `envirolink_llm_base_url`, `envirolink_llm_model`, `envirolink_llm_reasoning_effort`.
+- Upgrade from v1.55.0: with no preset saved, the old `envirolink_llm_provider` maps to `anthropic` or `custom`.
+- To add or change a model: edit `get_llm_presets()`.
 - Returns text or a `WP_Error` (code `llm_http_<status>` for HTTP errors). Callers log it and call `notify_api_failure()`.
 - `accuracy_rules()` (anti-fabrication) and `human_style_rules()` (no stock AI phrasing) are sent as the system prompt for article rewrites and roundups; the roundup metadata call gets `accuracy_rules()` only.
 - Response parsing still relies on the TITLE:/CONTENT:/IMAGE_KEYWORDS: markers; `call_llm` strips markdown bold around them.
@@ -253,9 +257,16 @@ if ($locations) {
 ```
 
 ### Changing the AI Model or Provider
-No code change needed: set the provider, base URL, key and model in EnviroLink News → Settings.
+Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model that isn't listed, use Custom or add a preset in `get_llm_presets()`.
 
 ## Recent Version History
+
+**v1.55.1** (2026-10-12) - AI Model pulldown with per-company API keys
+
+- Replaces v1.55.0's free-text provider/base URL/model fields with one **AI Model** pulldown: GPT-6 Luna (recommended), GPT-6.1 Sol, Gemini 3.8 Flash, Groq gpt-oss-120b, Anthropic Claude, Custom.
+- Separate saved key per company (OpenAI, Google, Groq, Anthropic, Custom), so switching models never needs a key re-entered.
+- Base URLs, model IDs and reasoning effort are built in (`get_llm_presets()`); only Custom exposes them.
+- Sites upgraded from v1.55.0 keep working: no saved preset → old provider setting maps to Anthropic or Custom.
 
 **v1.55.0** (2026-10-12) - Provider layer: switch AI providers from Settings (Anthropic API account suspended)
 

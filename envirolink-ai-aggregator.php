@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.55.0
+ * Version: 1.55.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.55.0');
+define('ENVIROLINK_VERSION', '1.55.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -283,7 +283,10 @@ class EnviroLink_AI_Aggregator {
     public function register_settings() {
         register_setting('envirolink_settings', 'envirolink_feeds');
         register_setting('envirolink_settings', 'envirolink_api_key');
-        register_setting('envirolink_settings', 'envirolink_llm_provider');
+        register_setting('envirolink_settings', 'envirolink_llm_preset');
+        register_setting('envirolink_settings', 'envirolink_openai_api_key');
+        register_setting('envirolink_settings', 'envirolink_gemini_api_key');
+        register_setting('envirolink_settings', 'envirolink_groq_api_key');
         register_setting('envirolink_settings', 'envirolink_anthropic_model');
         register_setting('envirolink_settings', 'envirolink_llm_base_url');
         register_setting('envirolink_settings', 'envirolink_llm_api_key');
@@ -332,7 +335,13 @@ class EnviroLink_AI_Aggregator {
             check_admin_referer('envirolink_settings');
 
             update_option('envirolink_api_key', sanitize_text_field($_POST['api_key']));
-            update_option('envirolink_llm_provider', (isset($_POST['llm_provider']) && $_POST['llm_provider'] === 'openai_compatible') ? 'openai_compatible' : 'anthropic');
+            $llm_preset = isset($_POST['llm_preset']) ? sanitize_text_field($_POST['llm_preset']) : '';
+            if (array_key_exists($llm_preset, $this->get_llm_presets())) {
+                update_option('envirolink_llm_preset', $llm_preset);
+            }
+            update_option('envirolink_openai_api_key', sanitize_text_field($_POST['openai_api_key']));
+            update_option('envirolink_gemini_api_key', sanitize_text_field($_POST['gemini_api_key']));
+            update_option('envirolink_groq_api_key', sanitize_text_field($_POST['groq_api_key']));
             update_option('envirolink_anthropic_model', sanitize_text_field($_POST['anthropic_model']));
             update_option('envirolink_llm_base_url', esc_url_raw(trim($_POST['llm_base_url'])));
             update_option('envirolink_llm_api_key', sanitize_text_field($_POST['llm_api_key']));
@@ -451,7 +460,8 @@ class EnviroLink_AI_Aggregator {
         }
         
         $api_key = get_option('envirolink_api_key', '');
-        $llm_provider = get_option('envirolink_llm_provider', 'anthropic');
+        $llm_presets = $this->get_llm_presets();
+        $llm_preset = $this->get_llm_preset_id();
         $active_llm_key = $this->get_llm_api_key();
         $post_category = get_option('envirolink_post_category', '');
         $post_status = get_option('envirolink_post_status', 'publish');
@@ -503,7 +513,7 @@ class EnviroLink_AI_Aggregator {
                         <tr>
                             <th>API Key Status:</th>
                             <td>
-                                <?php echo $llm_provider === 'openai_compatible' ? 'OpenAI-compatible' : 'Anthropic'; ?>:
+                                <?php echo esc_html($llm_presets[$llm_preset]['label']); ?>:
                                 <?php if (!empty($active_llm_key)): ?>
                                     <span style="color: green;">✓ Configured</span>
                                 <?php else: ?>
@@ -681,32 +691,69 @@ class EnviroLink_AI_Aggregator {
                     <table class="form-table">
                         <tr>
                             <th scope="row">
-                                <label for="llm_provider">AI Provider</label>
+                                <label for="llm_preset">AI Model</label>
                             </th>
                             <td>
-                                <select id="llm_provider" name="llm_provider">
-                                    <option value="anthropic" <?php selected($llm_provider, 'anthropic'); ?>>Anthropic</option>
-                                    <option value="openai_compatible" <?php selected($llm_provider, 'openai_compatible'); ?>>OpenAI-compatible (Groq, Gemini, etc.)</option>
+                                <select id="llm_preset" name="llm_preset">
+                                    <?php foreach ($llm_presets as $preset_id => $preset): ?>
+                                        <option value="<?php echo esc_attr($preset_id); ?>" data-company="<?php echo esc_attr($preset['company']); ?>" <?php selected($llm_preset, $preset_id); ?>><?php echo esc_html($preset['label']); ?></option>
+                                    <?php endforeach; ?>
                                 </select>
-                                <p class="description">Used for article rewrites, daily roundups and headline fixes.</p>
+                                <p class="description">Used for article rewrites, daily roundups and headline fixes. Each company's key is saved separately, so switching back and forth only needs the key once.</p>
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="openai">
+                            <th scope="row">
+                                <label for="openai_api_key">OpenAI API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="openai_api_key" name="openai_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_openai_api_key', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                                <p class="description">From <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a></p>
+                            </td>
+                        </tr>
+
+                        <tr class="envirolink-llm-row" data-company="gemini">
+                            <th scope="row">
+                                <label for="gemini_api_key">Google Gemini API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="gemini_api_key" name="gemini_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_gemini_api_key', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                                <p class="description">From <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> (billing must be enabled on the key's project)</p>
+                            </td>
+                        </tr>
+
+                        <tr class="envirolink-llm-row" data-company="groq">
+                            <th scope="row">
+                                <label for="groq_api_key">Groq API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="groq_api_key" name="groq_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_groq_api_key', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                                <p class="description">From <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a></p>
+                            </td>
+                        </tr>
+
+                        <tr class="envirolink-llm-row" data-company="anthropic">
                             <th scope="row">
                                 <label for="api_key">Anthropic API Key</label>
                             </th>
                             <td>
                                 <input type="password" id="api_key" name="api_key"
                                        value="<?php echo esc_attr($api_key); ?>"
-                                       class="regular-text" />
+                                       class="regular-text" autocomplete="off" />
                                 <p class="description">
                                     Get your API key from <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
                                 </p>
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="anthropic">
                             <th scope="row">
                                 <label for="anthropic_model">Anthropic Model</label>
                             </th>
@@ -714,46 +761,47 @@ class EnviroLink_AI_Aggregator {
                                 <input type="text" id="anthropic_model" name="anthropic_model"
                                        value="<?php echo esc_attr(get_option('envirolink_anthropic_model', 'claude-sonnet-5')); ?>"
                                        class="regular-text" />
+                                <p class="description">Only change this if Anthropic retires the model.</p>
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="custom">
                             <th scope="row">
-                                <label for="llm_base_url">OpenAI-compatible Base URL</label>
+                                <label for="llm_base_url">Custom API Base URL</label>
                             </th>
                             <td>
                                 <input type="url" id="llm_base_url" name="llm_base_url"
                                        value="<?php echo esc_attr(get_option('envirolink_llm_base_url', '')); ?>"
-                                       class="regular-text" placeholder="https://api.groq.com/openai/v1" />
-                                <p class="description">Requests go to <code>{base URL}/chat/completions</code>.</p>
+                                       class="regular-text" placeholder="https://api.example.com/v1" />
+                                <p class="description">Any OpenAI-compatible API. Requests go to <code>{base URL}/chat/completions</code>.</p>
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="custom">
                             <th scope="row">
-                                <label for="llm_api_key">OpenAI-compatible API Key</label>
+                                <label for="llm_api_key">Custom API Key</label>
                             </th>
                             <td>
                                 <input type="password" id="llm_api_key" name="llm_api_key"
                                        value="<?php echo esc_attr(get_option('envirolink_llm_api_key', '')); ?>"
-                                       class="regular-text" />
+                                       class="regular-text" autocomplete="off" />
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="custom">
                             <th scope="row">
-                                <label for="llm_model">OpenAI-compatible Model</label>
+                                <label for="llm_model">Custom Model</label>
                             </th>
                             <td>
                                 <input type="text" id="llm_model" name="llm_model"
                                        value="<?php echo esc_attr(get_option('envirolink_llm_model', '')); ?>"
-                                       class="regular-text" placeholder="openai/gpt-oss-120b" />
+                                       class="regular-text" />
                             </td>
                         </tr>
 
-                        <tr>
+                        <tr class="envirolink-llm-row" data-company="custom">
                             <th scope="row">
-                                <label for="llm_reasoning_effort">Reasoning Effort</label>
+                                <label for="llm_reasoning_effort">Custom Reasoning Effort</label>
                             </th>
                             <td>
                                 <?php $llm_reasoning_effort = get_option('envirolink_llm_reasoning_effort', ''); ?>
@@ -763,9 +811,25 @@ class EnviroLink_AI_Aggregator {
                                     <option value="medium" <?php selected($llm_reasoning_effort, 'medium'); ?>>Medium</option>
                                     <option value="high" <?php selected($llm_reasoning_effort, 'high'); ?>>High</option>
                                 </select>
-                                <p class="description">For reasoning models such as gpt-oss. Low is recommended for Groq gpt-oss-120b. Leave as "Not sent" for models that don't support it.</p>
+                                <p class="description">Only for reasoning models that support it. Leave as "Not sent" otherwise.</p>
                             </td>
                         </tr>
+
+                        <script>
+                        (function() {
+                            // Show only the key/model rows for the company of the selected AI Model.
+                            // Hidden fields are still submitted, so saved keys for other companies are kept.
+                            var select = document.getElementById('llm_preset');
+                            function sync() {
+                                var company = select.options[select.selectedIndex].getAttribute('data-company');
+                                document.querySelectorAll('.envirolink-llm-row').forEach(function(row) {
+                                    row.style.display = row.getAttribute('data-company') === company ? '' : 'none';
+                                });
+                            }
+                            select.addEventListener('change', sync);
+                            sync();
+                        })();
+                        </script>
 
                         <tr>
                             <th scope="row">
@@ -6454,13 +6518,113 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
     }
 
     /**
-     * API key for the active AI provider ('anthropic' uses the original envirolink_api_key option)
+     * AI models offered in the Settings "AI Model" pulldown.
+     * company selects which saved API key is used (see get_llm_config()).
+     */
+    private function get_llm_presets() {
+        return array(
+            'openai_luna' => array(
+                'label' => 'OpenAI – GPT-6 Luna (recommended)',
+                'company' => 'openai',
+                'provider' => 'openai_compatible',
+                'base_url' => 'https://api.openai.com/v1',
+                'model' => 'gpt-6-luna',
+                'reasoning_effort' => ''
+            ),
+            'openai_sol' => array(
+                'label' => 'OpenAI – GPT-6.1 Sol (best writing, higher cost)',
+                'company' => 'openai',
+                'provider' => 'openai_compatible',
+                'base_url' => 'https://api.openai.com/v1',
+                'model' => 'gpt-6.1-sol',
+                'reasoning_effort' => ''
+            ),
+            'gemini_flash' => array(
+                'label' => 'Google – Gemini 3.8 Flash',
+                'company' => 'gemini',
+                'provider' => 'openai_compatible',
+                'base_url' => 'https://generativelanguage.googleapis.com/v1beta/openai',
+                'model' => 'gemini-3.8-flash',
+                'reasoning_effort' => ''
+            ),
+            'groq_gpt_oss' => array(
+                'label' => 'Groq – gpt-oss-120b',
+                'company' => 'groq',
+                'provider' => 'openai_compatible',
+                'base_url' => 'https://api.groq.com/openai/v1',
+                'model' => 'openai/gpt-oss-120b',
+                // Medium got names right in testing; low misspelled them
+                'reasoning_effort' => 'medium'
+            ),
+            'anthropic' => array(
+                'label' => 'Anthropic – Claude',
+                'company' => 'anthropic',
+                'provider' => 'anthropic',
+                'base_url' => '',
+                'model' => '', // from envirolink_anthropic_model
+                'reasoning_effort' => ''
+            ),
+            'custom' => array(
+                'label' => 'Custom (any OpenAI-compatible API)',
+                'company' => 'custom',
+                'provider' => 'openai_compatible',
+                'base_url' => '', // from envirolink_llm_base_url / _model / _reasoning_effort
+                'model' => '',
+                'reasoning_effort' => ''
+            )
+        );
+    }
+
+    /**
+     * Selected AI Model preset. Sites upgraded from v1.55.0 have no preset saved yet:
+     * map the old provider setting (Anthropic or OpenAI-compatible fields) onto a preset.
+     */
+    private function get_llm_preset_id() {
+        $presets = $this->get_llm_presets();
+        $preset_id = get_option('envirolink_llm_preset', '');
+        if (isset($presets[$preset_id])) {
+            return $preset_id;
+        }
+        return get_option('envirolink_llm_provider', 'anthropic') === 'openai_compatible' ? 'custom' : 'anthropic';
+    }
+
+    /**
+     * Resolve the selected preset into provider, URL, model, key and reasoning effort
+     */
+    private function get_llm_config() {
+        $presets = $this->get_llm_presets();
+        $preset_id = $this->get_llm_preset_id();
+        $config = $presets[$preset_id];
+
+        $key_options = array(
+            'openai' => 'envirolink_openai_api_key',
+            'gemini' => 'envirolink_gemini_api_key',
+            'groq' => 'envirolink_groq_api_key',
+            'anthropic' => 'envirolink_api_key',
+            'custom' => 'envirolink_llm_api_key'
+        );
+        $config['api_key'] = get_option($key_options[$config['company']], '');
+
+        if ($preset_id === 'anthropic') {
+            $config['model'] = get_option('envirolink_anthropic_model', '');
+            if (empty($config['model'])) {
+                $config['model'] = 'claude-sonnet-5';
+            }
+        } elseif ($preset_id === 'custom') {
+            $config['base_url'] = get_option('envirolink_llm_base_url', '');
+            $config['model'] = get_option('envirolink_llm_model', '');
+            $config['reasoning_effort'] = get_option('envirolink_llm_reasoning_effort', '');
+        }
+
+        return $config;
+    }
+
+    /**
+     * API key for the selected AI model
      */
     private function get_llm_api_key() {
-        if (get_option('envirolink_llm_provider', 'anthropic') === 'openai_compatible') {
-            return get_option('envirolink_llm_api_key', '');
-        }
-        return get_option('envirolink_api_key', '');
+        $config = $this->get_llm_config();
+        return $config['api_key'];
     }
 
     /**
@@ -6468,18 +6632,19 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
      * Returns the response text, or WP_Error (code 'llm_http_<status>' for HTTP errors, so callers can spot 429s).
      */
     private function call_llm($prompt, $max_tokens, $timeout = 60, $system = '') {
-        $provider = get_option('envirolink_llm_provider', 'anthropic');
-        $api_key = $this->get_llm_api_key();
+        $config = $this->get_llm_config();
+        $provider = $config['provider'];
+        $api_key = $config['api_key'];
+        $model = $config['model'];
 
         if (empty($api_key)) {
-            return new WP_Error('llm_no_key', 'AI provider API key not configured');
+            return new WP_Error('llm_no_key', 'API key not configured for ' . $config['label']);
         }
 
         if ($provider === 'openai_compatible') {
-            $base_url = rtrim(get_option('envirolink_llm_base_url', ''), '/');
-            $model = get_option('envirolink_llm_model', '');
+            $base_url = rtrim($config['base_url'], '/');
             if (empty($base_url) || empty($model)) {
-                return new WP_Error('llm_not_configured', 'OpenAI-compatible base URL or model not configured');
+                return new WP_Error('llm_not_configured', 'Custom API base URL or model not configured');
             }
 
             $messages = array();
@@ -6497,7 +6662,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                 'max_completion_tokens' => $max_tokens + 2048,
                 'messages' => $messages
             );
-            $reasoning_effort = get_option('envirolink_llm_reasoning_effort', '');
+            $reasoning_effort = $config['reasoning_effort'];
             if (in_array($reasoning_effort, array('low', 'medium', 'high'), true)) {
                 $request['reasoning_effort'] = $reasoning_effort;
             }
@@ -6513,10 +6678,6 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             );
         } else {
             $provider = 'anthropic';
-            $model = get_option('envirolink_anthropic_model', '');
-            if (empty($model)) {
-                $model = 'claude-sonnet-5';
-            }
 
             $request = array(
                 'model' => $model,
@@ -6723,9 +6884,8 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
         }
         set_transient('envirolink_api_failure_notified', time(), DAY_IN_SECONDS);
 
-        $provider = get_option('envirolink_llm_provider', 'anthropic') === 'openai_compatible'
-            ? 'OpenAI-compatible provider (' . get_option('envirolink_llm_base_url', '') . ', model ' . get_option('envirolink_llm_model', '') . ')'
-            : 'Anthropic API';
+        $llm_config = $this->get_llm_config();
+        $provider = $llm_config['label'] . ' (model ' . $llm_config['model'] . ')';
 
         $subject = '[EnviroLink] AI aggregator API failure - articles are NOT being published';
         $body = "The EnviroLink AI News Aggregator failed to get a valid response from the {$provider}.\n\n"
