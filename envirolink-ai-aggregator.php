@@ -6852,6 +6852,7 @@ Image keyword rules:
 - NEVER use organization names or acronyms (EPA, UN, WHO, etc.)
 - Prefer concrete, visual nouns: wildlife, landscapes, infrastructure, weather events
 - Each phrase 2-4 words describing what a photographer would have shot (e.g. \"salmon swimming upstream\", \"dam removal river\", \"river salmon\"), from most specific to more general
+- The FIRST phrase must name the story's main subject itself (the storm, animal, landscape or event), not a side effect. For hurricanes, typhoons and other large storms use \"hurricane satellite image\" (or \"typhoon satellite image\") as the first phrase
 - Do NOT put place names in the phrases (no countries, states, cities or rivers): they shrink the search to almost nothing
 
 Headline capitalization rules (use Title Case):
@@ -7546,7 +7547,7 @@ Generate JSON output with these exact fields:
   \"headline\": \"MUST include 2-3 stories separated by punctuation, MUST end with full date '— Today's Environmental Briefing for {$date_string}' - no character limit\",
   \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details (can reference additional stories beyond headline)\",
   \"image_alt\": \"≤120 characters, plain-English description for lead story image\",
-  \"image_queries\": [\"3 photo search phrases (2-4 words each) for a real photograph of the headline's lead story, most specific first, e.g. 'hurricane power outage', 'downed power lines', 'hurricane damage'. No place names, people or organizations.\"]
+  \"image_queries\": [\"3 photo search phrases (2-4 words each) for a real photograph of the headline's lead story, the first naming the lead story's main subject itself (e.g. 'hurricane satellite image' for a hurricane, 'sea turtle' for a turtle story), then more general ones. For hurricanes and other large storms the first phrase must be a satellite image phrase. No place names, people or organizations.\"]
 }}
 
 IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the JSON object.";
@@ -7645,8 +7646,12 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         foreach ($sources as $source_name => $search) {
             $candidates = array();
             $seen = array();
+            $recently_used = get_option('envirolink_recent_photo_urls', array());
             foreach ($queries as $query) {
                 foreach (call_user_func($search, $query) as $candidate) {
+                    if (isset($recently_used[$candidate['landing_url']])) {
+                        continue; // used on another post in the last 30 days
+                    }
                     if (!isset($seen[$candidate['url']])) {
                         $seen[$candidate['url']] = true;
                         $candidates[] = $candidate;
@@ -7718,8 +7723,11 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             'q' => $query,
             'license' => 'cc0,pdm,by,by-sa,by-nc,by-nc-sa',
             'category' => 'photograph',
+            // Only sources of real photographs. Excludes e.g. rawpixel (hosts AI-generated
+            // images), 3D-model, clip-art, museum-object and scientific-illustration sources.
+            'source' => 'flickr,wikimedia,nasa,inaturalist,geographorguk',
             'mature' => 'false',
-            'page_size' => 10
+            'page_size' => 20
         )), array('timeout' => 20, 'headers' => $headers));
 
         if (is_wp_error($response)) {
@@ -7755,14 +7763,28 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
                 'source_label' => $this->openverse_source_label($source),
                 'license_label' => $this->openverse_license_label($license, isset($item['license_version']) ? $item['license_version'] : ''),
                 'license_url' => isset($item['license_url']) ? $item['license_url'] : '',
-                'thumb_url' => isset($item['thumbnail']) ? $item['thumbnail'] : ''
+                'thumb_url' => isset($item['thumbnail']) ? $item['thumbnail'] : '',
+                'shape' => $this->photo_shape(isset($item['width']) ? $item['width'] : 0, isset($item['height']) ? $item['height'] : 0)
             );
         }
         return $candidates;
     }
 
+    private function photo_shape($width, $height) {
+        $width = intval($width);
+        $height = intval($height);
+        if ($width <= 0 || $height <= 0) {
+            return '';
+        }
+        if ($width >= $height * 1.2) {
+            return 'wide';
+        }
+        return $height > $width ? 'tall' : 'square';
+    }
+
     private function openverse_source_label($source) {
-        $labels = array('flickr' => 'Flickr', 'wikimedia' => 'Wikimedia Commons', 'nasa' => 'NASA', 'smithsonian' => 'Smithsonian');
+        $labels = array('flickr' => 'Flickr', 'wikimedia' => 'Wikimedia Commons', 'nasa' => 'NASA', 'inaturalist' => 'iNaturalist',
+            'geographorguk' => 'Geograph');
         if (isset($labels[$source])) {
             return $labels[$source];
         }
@@ -7808,7 +7830,8 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
                 'source_label' => 'Pexels',
                 'license_label' => 'Pexels License',
                 'license_url' => 'https://www.pexels.com/license/',
-                'thumb_url' => isset($photo['src']['small']) ? $photo['src']['small'] : ''
+                'thumb_url' => isset($photo['src']['small']) ? $photo['src']['small'] : '',
+                'shape' => $this->photo_shape(isset($photo['width']) ? $photo['width'] : 0, isset($photo['height']) ? $photo['height'] : 0)
             );
         }
         return $candidates;
@@ -7886,7 +7909,11 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             if ($c['description'] !== '') {
                 $list .= ' | Tags: ' . $c['description'];
             }
-            $list .= ' | Source: ' . $c['source_label'] . "\n";
+            $list .= ' | Source: ' . $c['source_label'];
+            if (!empty($c['shape'])) {
+                $list .= ' | Shape: ' . $c['shape'];
+            }
+            $list .= "\n";
         }
 
         $attached_note = empty($images) ? '' : "\nThe photos themselves are attached in the same order (first image = photo 1). Judge them by what you see, using the titles and tags as context.\n";
@@ -7900,7 +7927,11 @@ CANDIDATE PHOTOS (title and tags written by the photographer):
 {$list}{$attached_note}
 Rules:
 - Choose a real photograph that is directly about the story's subject (same kind of event, place, species or issue). A compelling, specific photo beats a generic one: prefer sharp, well-composed images with a clear subject, drama or human/animal interest over dull scenes.
+- Prefer photos of the story's main subject itself (the storm, animal, landscape or event) over side effects. For hurricanes and large storms, a satellite image of the storm is ideal.
 - Reject candidates that look like illustrations, drawings, maps, charts, logos, screenshots, products, AI-generated images, or photos mainly of identifiable people unrelated to the story.
+- Featured images are cropped to a wide (landscape) frame, so prefer wide photos. Choose a tall or square one only if it is clearly the best fit.
+- For stories about wild animals, reject photos of captive animals (zoos, enclosures, cages, fences, aquarium glass).
+- Reject dark or dim interiors, snapshots inside people's homes, and anything odd, unsettling or low quality. The photo leads a news story on the homepage.
 - If no candidate clearly fits the story, choose 0. A missing photo is better than an unrelated or generic one (e.g. plain water, sky or a random landscape).
 - The alt text must describe what the chosen photo shows. Do not claim it shows the specific event in the story unless the title says so.
 
@@ -7965,6 +7996,15 @@ Respond ONLY with JSON: {\"choice\": <number, or 0 for none>, \"alt\": \"<alt te
             'creator' => $image['creator']
         ));
         $this->log_message('    → Photo credit: ' . wp_strip_all_tags($image['credit_html']));
+
+        // Remember the photo so it isn't reused on another post for 30 days
+        if (!empty($image['landing_url'])) {
+            $recent = get_option('envirolink_recent_photo_urls', array());
+            $cutoff = time() - 30 * DAY_IN_SECONDS;
+            $recent = array_filter($recent, function($used_at) use ($cutoff) { return $used_at >= $cutoff; });
+            $recent[$image['landing_url']] = time();
+            update_option('envirolink_recent_photo_urls', $recent, false);
+        }
     }
 
     /**
