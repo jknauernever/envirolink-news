@@ -262,6 +262,10 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.58.2** (2026-10-13) - Log why article-page fetches fail
+
+- On the live site, `fetch_article_text()` returned nothing for Guardian pages that extract fine locally (779 words), with no log line. Now logs the HTTP error/status, empty page, or missing PHP DOM extension, and the word counts when the page text isn't used.
+
 **v1.58.1** (2026-10-13) - FIX: No more "details not provided" stub articles
 
 - **Symptom:** Half of the articles published Oct 12-13 were 27-60 word stubs that talked about the source ("The supplied material contains only the title…"); nine were headline-only items with no story at all. Median article length fell from ~240 words to 61.

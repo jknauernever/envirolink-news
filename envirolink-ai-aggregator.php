@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.58.1
+ * Version: 1.58.2
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.58.1');
+define('ENVIROLINK_VERSION', '1.58.2');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -5519,6 +5519,8 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                         if (str_word_count($page_text) > str_word_count(wp_strip_all_tags($source_text))) {
                             $this->log_message('  → RSS text was short; using article page text (' . str_word_count($page_text) . ' words)');
                             $source_text = $page_text;
+                        } else {
+                            $this->log_message('  → RSS text was short (' . str_word_count(wp_strip_all_tags($source_text)) . ' words); article page gave ' . str_word_count($page_text) . ' words, keeping RSS text');
                         }
                     }
                     $source_words = str_word_count(wp_strip_all_tags($source_text));
@@ -6110,11 +6112,21 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             'user-agent' => 'Mozilla/5.0 (compatible; EnviroLink News Aggregator; +https://envirolink.org)',
             'headers' => array('Accept' => 'text/html')
         ));
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        if (is_wp_error($response)) {
+            $this->log_message('  → Article page fetch failed: ' . $response->get_error_message());
+            return '';
+        }
+        if (wp_remote_retrieve_response_code($response) !== 200) {
+            $this->log_message('  → Article page fetch failed: HTTP ' . wp_remote_retrieve_response_code($response));
             return '';
         }
         $html = wp_remote_retrieve_body($response);
-        if (empty($html) || !class_exists('DOMDocument')) {
+        if (empty($html)) {
+            $this->log_message('  → Article page fetch returned an empty page');
+            return '';
+        }
+        if (!class_exists('DOMDocument')) {
+            $this->log_message('  → Cannot read article page: PHP DOM extension is not installed on this server');
             return '';
         }
 
