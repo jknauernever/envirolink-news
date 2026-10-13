@@ -110,6 +110,7 @@ This is a monolithic WordPress plugin contained entirely in `envirolink-ai-aggre
    - Sends original title + content to Claude API
    - Model: `claude-sonnet-4-20250514`
    - Max tokens: 1024
+   - Short RSS text (<150 words) is replaced by article page text (`fetch_article_text()`); under 80 words of source → skipped
    - Expects structured response with "TITLE:" and "CONTENT:" markers
    - Parses response using regex
 
@@ -260,6 +261,12 @@ if ($locations) {
 Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model that isn't listed, use Custom or add a preset in `get_llm_presets()`.
 
 ## Recent Version History
+
+**v1.58.1** (2026-10-13) - FIX: No more "details not provided" stub articles
+
+- **Symptom:** Half of the articles published Oct 12-13 were 27-60 word stubs that talked about the source ("The supplied material contains only the title…"); nine were headline-only items with no story at all. Median article length fell from ~240 words to 61.
+- **Root cause:** The AI only ever saw the RSS text, which for most feeds is a one-sentence teaser (one feed sends only a headline), while the prompt asked for 200-300 words. Claude used to pad with its own background knowledge (sometimes invented); since v1.55.0's `accuracy_rules()` forbid that, the models wrote about the missing details instead, and the plugin published it.
+- **Fix:** When RSS text is under 150 words, `fetch_article_text()` pulls the article page (JSON-LD `articleBody`, else `<article>` paragraphs, capped at 1500 words). Under 80 words of source after that → skipped and logged, no AI call. Target length now follows source length (80-150 words for short sources). Prompt forbids writing about the source and allows `SKIP`; `source_meta_pattern()` blocks any output that still talks about missing details (0 false positives on 40 pre-switch posts). The content hash still covers only the RSS item.
 
 **v1.58.0** (2026-10-13) - Roundup rebuilt: top stories ranked by outlet coverage
 
