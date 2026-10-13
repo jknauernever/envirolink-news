@@ -262,6 +262,12 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.58.3** (2026-10-13) - Full log in its own window
+
+- **Symptom:** After a feed run, the Detailed Log showed only the automatic duplicate cleanup; the article lines were gone.
+- **Root cause:** `log_message()` kept only the last 100 lines, and the cleanup that ends every run fills most of them.
+- **Fix:** Cap raised to 2000 lines. New "Open Full Log" button opens `ajax_view_log()` (admin-ajax GET, nonce `envirolink_view_log`, manage_options) in a new window: the live log refreshing every 5s during a run, otherwise the last saved log.
+
 **v1.58.2** (2026-10-13) - Log why article-page fetches fail
 
 - On the live site, `fetch_article_text()` returned nothing for Guardian pages that extract fine locally (779 words), with no log line. Now logs the HTTP error/status, empty page, or missing PHP DOM extension, and the word counts when the page text isn't used.
@@ -1028,6 +1034,7 @@ The `?? null` ensures backward compatibility — if the AI response doesn't incl
 - `clear_progress()`: Saves log to wp_options for persistence
 - Logs preserved after completion for review (purple button log fix in v1.9.1)
 - Transient expires after 5 minutes (300 seconds)
+- Log capped at 2000 lines (100 before v1.58.3); "Open Full Log" shows it all in a new window (`ajax_view_log()`)
 
 ## Testing the Plugin
 
