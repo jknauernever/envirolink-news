@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.58.3
+ * Version: 1.58.4
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.58.3');
+define('ENVIROLINK_VERSION', '1.58.4');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -3104,7 +3104,7 @@ class EnviroLink_AI_Aggregator {
      * 2. Identical titles
      * 3. Very similar titles (85%+ similarity)
      */
-    private function cleanup_duplicates() {
+    private function cleanup_duplicates($standalone = true) {
         global $wpdb;
 
         // Step 2 is O(n^2) over the post set, which gets expensive past a few
@@ -3113,12 +3113,16 @@ class EnviroLink_AI_Aggregator {
         @ini_set('memory_limit', '256M');
         @set_time_limit(900);
 
-        $this->clear_progress();
-        $this->update_progress(array(
-            'status' => 'running',
-            'message' => 'Scanning for duplicate articles...',
-            'percent' => 0
-        ));
+        // When run automatically at the end of a feed run, add to that run's log and
+        // progress instead of resetting them (resetting threw away every run's article lines)
+        if ($standalone) {
+            $this->clear_progress();
+            $this->update_progress(array(
+                'status' => 'running',
+                'message' => 'Scanning for duplicate articles...',
+                'percent' => 0
+            ));
+        }
 
         // Get all EnviroLink posts (including scheduled posts!)
         $args = array(
@@ -3305,11 +3309,13 @@ class EnviroLink_AI_Aggregator {
             }
         }
 
-        $this->update_progress(array(
-            'status' => 'complete',
-            'message' => 'Cleanup complete',
-            'percent' => 100
-        ));
+        if ($standalone) {
+            $this->update_progress(array(
+                'status' => 'complete',
+                'message' => 'Cleanup complete',
+                'percent' => 100
+            ));
+        }
 
         if ($deleted_count > 0) {
             $message = "Cleanup complete! Found {$duplicates_found} sets of duplicates and deleted {$deleted_count} duplicate posts.";
@@ -3320,7 +3326,9 @@ class EnviroLink_AI_Aggregator {
             $this->log_message($message);
         }
 
-        $this->clear_progress();
+        if ($standalone) {
+            $this->clear_progress();
+        }
 
         return array(
             'success' => true,
@@ -5937,7 +5945,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             $this->log_message('=== Running Automatic Duplicate Cleanup ===');
             $this->log_message('Scanning for any duplicates that slipped through...');
 
-            $cleanup_result = $this->cleanup_duplicates();
+            $cleanup_result = $this->cleanup_duplicates(false);
 
             if ($cleanup_result['success']) {
                 $this->log_message('✓ Auto-cleanup complete: ' . $cleanup_result['message']);
