@@ -262,6 +262,12 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.58.4** (2026-10-13) - Feed runs keep their log
+
+- **Symptom:** After a feed run (on 1.58.3, which keeps 2000 lines), the saved log held a single line: "Auto-cleanup complete: No duplicates found."
+- **Root cause:** The automatic duplicate cleanup at the end of every run called `cleanup_duplicates()`, which calls `clear_progress()` at its start and end. That saved and deleted the progress transient twice, so the run's article lines were discarded every time, and the admin page saw the transient disappear and reported the run as finished while cleanup was still going (the "stuck" log).
+- **Fix:** `cleanup_duplicates($standalone = true)`; the auto-cleanup passes `false`, which skips the progress reset/complete calls so its lines are appended to the run's log. The Clean Duplicates button behaves as before.
+
 **v1.58.3** (2026-10-13) - Full log in its own window
 
 - **Symptom:** After a feed run, the Detailed Log showed only the automatic duplicate cleanup; the article lines were gone.
