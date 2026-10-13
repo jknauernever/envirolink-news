@@ -261,6 +261,13 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.57.0** (2026-10-12) - Wikimedia Commons first for photos of the actual event; photo settings UI cleanup
+
+- **Commons direct search** (`search_commons_candidates()`): searched first, by the story's named subject (new `IMAGE_SUBJECT:` field in the article prompt, `image_subject` in roundup metadata). Openverse's copy of Commons lags; direct search found GOES/MODIS satellite images of the current Hurricane Isaias uploaded the day before. JPEG only (filters maps/charts); credit from Commons `extmetadata` (Artist cleaned by `clean_photo_creator()`, LicenseShortName, LicenseUrl). Commons hosts only free licenses.
+- **Order:** Commons (subject, then first general phrase) → Openverse (general phrases) → Pexels → no photo.
+- **AI choice now date-aware:** today's date in the prompt; older events with a reused name (2020 vs 2026 Isaias) count as different events. Prefers same species/region for wildlife stories.
+- **UI cleanup:** one "Photos" section in Settings explaining the order and licenses (Openverse ID/secret, Pexels key as backup). Roundup checkbox now "Search for a photo of the lead story"; Unsplash key field, instructions and JS toggle removed (option `envirolink_roundup_auto_fetch_unsplash` key unchanged). Feed Edit Settings: "Search for a photo (recommended)". Feed list shows "Photos: search / RSS feed". Feed Actions' "Update Images" button removed (it re-applied copyrighted RSS photos).
+
 **v1.56.0** (2026-10-12) - Open-licensed photo search (Openverse) with AI photo selection
 
 - **Why:** Roundup and Pexels-feed images were generic (e.g. a plain-water photo for a hurricane + turtles roundup) because the search used one keyword from the headline and fell back to random "nature" queries. News outlets' own photos are copyrighted, so they're not an option.

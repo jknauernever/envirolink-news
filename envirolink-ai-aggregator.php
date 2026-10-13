@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.56.0
+ * Version: 1.57.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.56.0');
+define('ENVIROLINK_VERSION', '1.57.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -363,7 +363,6 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_keyword_daily_limit', absint($_POST['keyword_daily_limit']));
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
-            update_option('envirolink_unsplash_api_key', sanitize_text_field($_POST['unsplash_api_key']));
             update_option('envirolink_cron_secret_key', sanitize_text_field($_POST['cron_secret_key']));
             update_option('envirolink_ontology_enabled', isset($_POST['ontology_enabled']) ? 'yes' : 'no');
 
@@ -635,7 +634,7 @@ class EnviroLink_AI_Aggregator {
 
                 <div class="card" style="flex: 1; max-width: 450px;">
                     <h2 style="margin-top: 0;">Feed Actions</h2>
-                    <p class="description" style="margin-top: -8px; margin-bottom: 15px;">Run individual feeds or update their images</p>
+                    <p class="description" style="margin-top: -8px; margin-bottom: 15px;">Run individual feeds</p>
                     <?php if (empty($feeds)): ?>
                         <p style="color: #666; font-style: italic;">No feeds configured yet. Add feeds in the RSS Feeds tab below.</p>
                     <?php else: ?>
@@ -661,12 +660,6 @@ class EnviroLink_AI_Aggregator {
                                                 data-include-locations="<?php echo (isset($feed['include_locations']) && $feed['include_locations']) ? '1' : '0'; ?>"
                                                 title="Edit feed settings">
                                             <span class="dashicons dashicons-edit" style="font-size: 16px; width: 16px; height: 16px;"></span>
-                                        </button>
-                                        <button type="button" class="button button-small update-images-btn"
-                                                data-index="<?php echo $index; ?>"
-                                                data-name="<?php echo esc_attr($feed['name']); ?>"
-                                                title="Re-download images (last 20 posts)">
-                                            <span class="dashicons dashicons-format-image" style="font-size: 16px; width: 16px; height: 16px;"></span>
                                         </button>
                                         <button type="button" class="button button-small button-primary run-feed-btn"
                                                 data-index="<?php echo $index; ?>"
@@ -838,17 +831,16 @@ class EnviroLink_AI_Aggregator {
                         </script>
 
                         <tr>
-                            <th scope="row">
-                                <label for="pexels_api_key">Pexels API Key</label>
-                            </th>
+                            <th scope="row">Photos</th>
                             <td>
-                                <input type="password" id="pexels_api_key" name="pexels_api_key"
-                                       value="<?php echo esc_attr(get_option('envirolink_pexels_api_key', '')); ?>"
-                                       class="regular-text" />
-                                <p class="description">
-                                    Get your free API key from <a href="https://www.pexels.com/api/" target="_blank">pexels.com/api</a><br>
-                                    Fallback photo source when Openverse has no good match
-                                </p>
+                                <p style="margin-top: 0;">Each article and the daily roundup get a real photo found by search, tried in this order:</p>
+                                <ol style="margin: 0 0 8px 18px;">
+                                    <li><strong>Wikimedia Commons</strong>, searched by the story's named subject (e.g. a named storm or place) for photos of the actual event</li>
+                                    <li><strong>Openverse</strong>: Flickr, Wikimedia Commons, NASA, iNaturalist and Geograph</li>
+                                    <li><strong>Pexels</strong> stock photos, only if nothing above fits</li>
+                                    <li>Otherwise <strong>no photo</strong>. The outlet's own RSS photo is not used.</li>
+                                </ol>
+                                <p class="description">Only public domain and Creative Commons photos are used (including non-commercial licenses; no "no derivatives"). The AI looks at the candidates and picks the most relevant one. A credit line (photographer, source, license) appears under each photo. Photo search can be switched off per feed in its Edit Settings.</p>
                             </td>
                         </tr>
 
@@ -871,11 +863,19 @@ class EnviroLink_AI_Aggregator {
                                 <input type="password" id="openverse_client_secret" name="openverse_client_secret"
                                        value="<?php echo esc_attr(get_option('envirolink_openverse_client_secret', '')); ?>"
                                        class="regular-text" autocomplete="off" />
-                                <p class="description">
-                                    Openverse searches openly licensed photos from Flickr, Wikimedia Commons, NASA and others.
-                                    Used first when a feed or the daily roundup searches for a photo; the photographer and license are credited under the image.
-                                    Without credentials, Openverse allows only a few searches per hour.
-                                </p>
+                                <p class="description">Free. Without them Openverse allows only a few searches per hour.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="pexels_api_key">Pexels API Key</label>
+                            </th>
+                            <td>
+                                <input type="password" id="pexels_api_key" name="pexels_api_key"
+                                       value="<?php echo esc_attr(get_option('envirolink_pexels_api_key', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                                <p class="description">Backup source. Free key from <a href="https://www.pexels.com/api/" target="_blank">pexels.com/api</a></p>
                             </td>
                         </tr>
 
@@ -1005,40 +1005,19 @@ class EnviroLink_AI_Aggregator {
                                 Roundup Featured Images
                             </th>
                             <td>
-                                <label style="display: block; margin-bottom: 15px;">
+                                <label style="display: block; margin-bottom: 10px;">
                                     <input type="checkbox" name="roundup_auto_fetch_unsplash" id="roundup_auto_fetch_unsplash"
                                            <?php checked(get_option('envirolink_roundup_auto_fetch_unsplash', 'no'), 'yes'); ?> />
-                                    <strong>Auto-fetch from Unsplash</strong> - Automatically get high-quality environmental images from Unsplash (free stock photos)
+                                    <strong>Search for a photo of the lead story</strong> (same photo search as articles, see Photos above)
                                 </label>
-
-                                <div id="unsplash_api_key_wrapper" style="margin-bottom: 15px; padding: 15px; background: #f0f0f1; border-radius: 4px; <?php echo get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'no' ? 'display: none;' : ''; ?>">
-                                    <label style="display: block; margin-bottom: 8px;">
-                                        <strong>Unsplash API Access Key</strong> (required for auto-fetch):
-                                    </label>
-                                    <input type="text"
-                                           name="unsplash_api_key"
-                                           value="<?php echo esc_attr(get_option('envirolink_unsplash_api_key', '')); ?>"
-                                           class="regular-text"
-                                           placeholder="Enter your Unsplash Access Key"
-                                           style="width: 100%; max-width: 500px;" />
-                                    <p class="description" style="margin-top: 8px;">
-                                        Get a free API key at <a href="https://unsplash.com/developers" target="_blank">unsplash.com/developers</a><br>
-                                        1. Create a free account<br>
-                                        2. Create a new application (name it "EnviroLink News")<br>
-                                        3. Copy the "Access Key" and paste it here
-                                    </p>
-                                </div>
-
                                 <p class="description" style="margin-bottom: 15px;">
-                                    <strong>Option 1:</strong> Auto-fetch from Unsplash (keywords: environment, climate, nature, earth) - requires API key above<br>
-                                    <strong>Option 2:</strong> Upload your own collection below and randomly select from it<br>
-                                    <strong>Option 3:</strong> Enable both - uses Unsplash if your collection is empty
+                                    If the search finds nothing suitable, or this is unchecked, a photo from your collection below is used. If the collection is empty, the roundup uses the lead article's photo.
                                 </p>
 
                                 <div style="border-top: 1px solid #ddd; padding-top: 15px; margin-top: 15px;">
                                     <p class="description" style="margin-bottom: 15px;">
-                                        <strong>Manual Collection:</strong> Upload multiple images to create a collection. The plugin will randomly select one for each daily roundup post.<br>
-                                        <strong>Attribution:</strong> Add photo credits by editing each image in Media Library → Caption field (e.g., "Photo by John Doe")
+                                        <strong>Your photo collection (backup):</strong> photos you upload here are picked at random when the search finds nothing. Only add photos you have the rights to use.<br>
+                                        <strong>Credit:</strong> add it in Media Library → the photo's Caption field (e.g. "Photo: John Doe")
                                     </p>
 
                                 <?php
@@ -1063,7 +1042,7 @@ class EnviroLink_AI_Aggregator {
                                 </button>
 
                                 <p class="description" style="margin-top: 10px;">
-                                    <strong>Tip:</strong> Upload high-quality environmental images (nature, earth, climate themes). Currently <?php echo count($roundup_images); ?> image(s) in collection.
+                                    Currently <?php echo count($roundup_images); ?> photo(s) in the collection.
                                 </p>
 
                                 <input type="hidden" name="roundup_images" id="roundup_images" value="<?php echo esc_attr(json_encode($roundup_images)); ?>">
@@ -1224,7 +1203,10 @@ class EnviroLink_AI_Aggregator {
                                             <span style="color: red;">○ Disabled</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td><?php echo esc_html($feed['name']); ?></td>
+                                    <td>
+                                        <?php echo esc_html($feed['name']); ?><br>
+                                        <span style="color: #666; font-size: 12px;">Photos: <?php echo $use_pexels_images ? 'search' : 'RSS feed'; ?></span>
+                                    </td>
                                     <td>
                                         <a href="<?php echo esc_url($feed['url']); ?>" target="_blank">
                                             <?php echo esc_html($feed['url']); ?>
@@ -1331,11 +1313,11 @@ class EnviroLink_AI_Aggregator {
                                     <td>
                                         <label>
                                             <input type="checkbox" name="use_pexels_images" id="edit-use-pexels-images" value="1" />
-                                            Search for an openly licensed photo (Openverse, then Pexels) instead of using the RSS image
+                                            Search for a photo (recommended)
                                         </label>
                                         <p class="description">
-                                            When enabled, searches Pexels for relevant images using article keywords instead of using images from the RSS feed.<br>
-                                            <strong>Requires Pexels API key</strong> (configure in Settings tab)
+                                            Finds a real, openly licensed photo for each article (see Photos in the Settings tab).<br>
+                                            Unchecked: uses the outlet's own RSS photo, which is usually copyrighted.
                                         </p>
                                     </td>
                                 </tr>
@@ -1613,14 +1595,6 @@ class EnviroLink_AI_Aggregator {
                 $('#articles-tab').show();
             <?php endif; ?>
 
-            // Toggle Unsplash API key field visibility
-            $('#roundup_auto_fetch_unsplash').change(function() {
-                if ($(this).is(':checked')) {
-                    $('#unsplash_api_key_wrapper').slideDown();
-                } else {
-                    $('#unsplash_api_key_wrapper').slideUp();
-                }
-            });
 
             // Load saved log from last run on page load
             function loadSavedLog() {
@@ -5539,7 +5513,8 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                     $found_image = $this->find_story_image(
                         $rewritten['title'],
                         wp_trim_words(wp_strip_all_tags($rewritten['content']), 60, '...'),
-                        $this->split_image_queries($rewritten['image_keywords'] ?? '', $rewritten['title'])
+                        $this->split_image_queries($rewritten['image_keywords'] ?? '', $rewritten['title']),
+                        $rewritten['image_subject'] ?? ''
                     );
 
                     if ($found_image) {
@@ -6868,6 +6843,7 @@ Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
 3. Three photo search phrases for finding a real photograph that illustrates the story
+4. The story's specific named subject for an encyclopedia-style photo search, if it has one
 
 Image keyword rules:
 - Focus on the ENVIRONMENTAL or PHYSICAL subject (e.g., \"school bus emissions\", \"coral reef bleaching\", \"wildfire smoke\")
@@ -6899,7 +6875,8 @@ IMPORTANT: Do NOT include any attribution, source credit, or byline statements i
 Format your response as:
 TITLE: [new headline]
 CONTENT: [rewritten content]
-IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
+IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]
+IMAGE_SUBJECT: [ONE specific named event, place or species, e.g. \"Hurricane Isaias\", \"Klamath River\", \"Bornean orangutan\", or \"none\"]";
         
         $text = $this->call_llm($prompt, 1024, 60, $this->accuracy_rules() . "\n\n" . $this->human_style_rules());
         
@@ -6912,7 +6889,7 @@ IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
         
         // Parse response
         if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/s', $text, $title_match) &&
-            preg_match('/CONTENT:\s*(.+?)(?:\nIMAGE_KEYWORDS:|\s*$)/s', $text, $content_match)) {
+            preg_match('/CONTENT:\s*(.+?)(?:\nIMAGE_(?:KEYWORDS|SUBJECT):|\s*$)/s', $text, $content_match)) {
 
             $ai_title = trim($title_match[1]);
 
@@ -6925,6 +6902,13 @@ IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
             if (preg_match('/IMAGE_KEYWORDS:\s*(.+?)(?:\n|$)/s', $text, $keywords_match)) {
                 $image_keywords = trim($keywords_match[1]);
             }
+            $image_subject = '';
+            if (preg_match('/IMAGE_SUBJECT:\s*(.+?)(?:\n|$)/s', $text, $subject_match)) {
+                $image_subject = trim($subject_match[1], " \t\"'[]");
+                if (strtolower($image_subject) === 'none') {
+                    $image_subject = '';
+                }
+            }
 
             // Strip H1 tags from content (convert to H2) to prevent "More than one H1" AIOSEO warnings
             $content = trim($content_match[1]);
@@ -6934,7 +6918,8 @@ IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
             return array(
                 'title' => $final_title,
                 'content' => $content,
-                'image_keywords' => $image_keywords
+                'image_keywords' => $image_keywords,
+                'image_subject' => $image_subject
             );
         }
 
@@ -7313,7 +7298,8 @@ IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
                 $found_image = $this->find_story_image(
                     preg_replace('/\s*—\s*Today.*$/u', '', $post_title),
                     $dek,
-                    $this->split_image_queries(implode('; ', $roundup_queries), $post_title)
+                    $this->split_image_queries(implode('; ', $roundup_queries), $post_title),
+                    ($ai_metadata && !empty($ai_metadata['image_subject']) && is_string($ai_metadata['image_subject'])) ? $ai_metadata['image_subject'] : ''
                 );
 
                 if ($found_image) {
@@ -7570,6 +7556,7 @@ Generate JSON output with these exact fields:
   \"headline\": \"MUST include 2-3 stories separated by punctuation, MUST end with full date '— Today's Environmental Briefing for {$date_string}' - no character limit\",
   \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details (can reference additional stories beyond headline)\",
   \"image_alt\": \"≤120 characters, plain-English description for lead story image\",
+  \"image_subject\": \"ONE specific named event, place or species from the lead story (e.g. 'Hurricane Isaias', 'Kibale National Park', 'Bornean orangutan'), or empty string\",
   \"image_queries\": [\"3 photo search phrases (2-4 words each) for a real photograph of the headline's lead story, the first naming the lead story's main subject itself (e.g. 'hurricane satellite image' for a hurricane, 'sea turtle' for a turtle story), then more general ones. For hurricanes and other large storms the first phrase must be a satellite image phrase. No place names, people or organizations.\"]
 }}
 
@@ -7655,22 +7642,29 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
      * the AI picks the best candidate or rejects them all. Never falls back to a generic photo.
      * Returns array(url, alt, source_label, credit_html) or false.
      */
-    private function find_story_image($headline, $summary, $queries) {
-        if (empty($queries)) {
+    private function find_story_image($headline, $summary, $queries, $subject = '') {
+        if (empty($queries) && $subject === '') {
             $this->log_message('  → [PHOTO] No search phrases available');
             return false;
         }
-        $this->log_message('  → [PHOTO] Search phrases: ' . implode(' | ', $queries));
+        $this->log_message('  → [PHOTO] Subject: ' . ($subject !== '' ? $subject : '(none)') . ' | Search phrases: ' . implode(' | ', $queries));
 
+        // 1. Wikimedia Commons, searched directly by the named subject: often has photos or
+        //    satellite images of the actual event within days (Openverse's copy lags).
+        // 2. Openverse (Flickr, Wikimedia, NASA, iNaturalist, Geograph) with general phrases.
+        // 3. Pexels with general phrases.
+        $commons_queries = array_values(array_unique(array_filter(array_merge(array($subject), array_slice($queries, 0, 1)))));
         $sources = array(
-            'openverse' => array($this, 'search_openverse_candidates'),
-            'pexels' => array($this, 'search_pexels_candidates')
+            'wikimedia commons' => array(array($this, 'search_commons_candidates'), $commons_queries),
+            'openverse' => array(array($this, 'search_openverse_candidates'), $queries),
+            'pexels' => array(array($this, 'search_pexels_candidates'), $queries)
         );
-        foreach ($sources as $source_name => $search) {
+        $recently_used = get_option('envirolink_recent_photo_urls', array());
+        foreach ($sources as $source_name => $source) {
+            list($search, $source_queries) = $source;
             $candidates = array();
             $seen = array();
-            $recently_used = get_option('envirolink_recent_photo_urls', array());
-            foreach ($queries as $query) {
+            foreach ($source_queries as $query) {
                 foreach (call_user_func($search, $query) as $candidate) {
                     if (isset($recently_used[$candidate['landing_url']])) {
                         continue; // used on another post in the last 30 days
@@ -7694,6 +7688,87 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
             $this->log_message('  → [PHOTO] AI rejected all ' . $source_name . ' candidates as not relevant');
         }
         return false;
+    }
+
+    /**
+     * Search Wikimedia Commons directly for JPEG photos. Commons only accepts freely licensed
+     * files (no non-commercial or no-derivatives), so every result is usable with a credit.
+     */
+    private function search_commons_candidates($query) {
+        $response = wp_remote_get('https://commons.wikimedia.org/w/api.php?' . http_build_query(array(
+            'action' => 'query',
+            'format' => 'json',
+            'generator' => 'search',
+            'gsrsearch' => $query . ' filemime:image/jpeg',
+            'gsrnamespace' => 6,
+            'gsrlimit' => 20,
+            'prop' => 'imageinfo',
+            'iiprop' => 'url|size|extmetadata',
+            'iiurlwidth' => 1280
+        )), array(
+            'timeout' => 20,
+            'headers' => array('User-Agent' => 'EnviroLink-News-Aggregator/' . ENVIROLINK_VERSION . ' (+https://www.envirolink.org)')
+        ));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            $this->log_message('  → [COMMONS] ✗ Search failed for "' . $query . '"');
+            return array();
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $pages = isset($body['query']['pages']) ? $body['query']['pages'] : array();
+        // Keep Commons' relevance order
+        uasort($pages, function($a, $b) {
+            return (isset($a['index']) ? $a['index'] : 0) - (isset($b['index']) ? $b['index'] : 0);
+        });
+
+        $candidates = array();
+        foreach ($pages as $page) {
+            if (empty($page['imageinfo'][0])) {
+                continue;
+            }
+            $info = $page['imageinfo'][0];
+            $meta = isset($info['extmetadata']) ? $info['extmetadata'] : array();
+            $field = function($name) use ($meta) {
+                return isset($meta[$name]['value']) ? trim(html_entity_decode(wp_strip_all_tags($meta[$name]['value']), ENT_QUOTES)) : '';
+            };
+            $license = $field('LicenseShortName');
+            $width = isset($info['width']) ? intval($info['width']) : 0;
+            if ($license === '' || empty($info['thumburl']) || $width < 800) {
+                continue;
+            }
+            $creator_url = '';
+            if (isset($meta['Artist']['value']) && preg_match('/href="([^"]+)"/', $meta['Artist']['value'], $m)) {
+                $creator_url = strpos($m[1], '//') === 0 ? 'https:' . $m[1] : $m[1];
+            }
+            $title = preg_replace('/^File:|\.(jpe?g)$/i', '', isset($page['title']) ? $page['title'] : '');
+            $candidates[] = array(
+                'url' => $info['thumburl'],
+                'title' => $title,
+                'description' => mb_substr($field('ImageDescription'), 0, 200),
+                'date' => substr($field('DateTimeOriginal'), 0, 10),
+                'creator' => $this->clean_photo_creator($field('Artist')),
+                'creator_url' => $creator_url,
+                'landing_url' => isset($info['descriptionurl']) ? $info['descriptionurl'] : '',
+                'source_label' => 'Wikimedia Commons',
+                'license_label' => $license,
+                'license_url' => $field('LicenseUrl'),
+                // Standard thumbnail size, small enough for the AI to look at
+                'thumb_url' => str_replace('/1280px-', '/330px-', $info['thumburl']),
+                'shape' => $this->photo_shape($width, isset($info['height']) ? $info['height'] : 0)
+            );
+        }
+        return $candidates;
+    }
+
+    /**
+     * Tidy a Commons "Artist" field for the credit line: drop URLs, user-ID numbers and
+     * "Own work"-style boilerplate, keep the name.
+     */
+    private function clean_photo_creator($artist) {
+        $artist = preg_replace('#https?://\S+#', '', $artist);
+        $artist = preg_replace('/^\s*\d+\s*[-–—]\s*/u', '', $artist);
+        $artist = preg_replace('/\s*[-–—|,]\s*$/u', '', trim($artist));
+        $artist = trim(preg_replace('/\s*[-–—]\s*[-–—]\s*/u', ' - ', $artist), " -–—|,");
+        return mb_substr($artist, 0, 80);
     }
 
     /**
@@ -7933,16 +8008,21 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
                 $list .= ' | Tags: ' . $c['description'];
             }
             $list .= ' | Source: ' . $c['source_label'];
+            if (!empty($c['date'])) {
+                $list .= ' | Date: ' . $c['date'];
+            }
             if (!empty($c['shape'])) {
                 $list .= ' | Shape: ' . $c['shape'];
             }
             $list .= "\n";
         }
 
+        $today = current_time('Y-m-d');
         $attached_note = empty($images) ? '' : "\nThe photos themselves are attached in the same order (first image = photo 1). Judge them by what you see, using the titles and tags as context.\n";
 
         $prompt = "You are the photo editor for EnviroLink.org, an environmental news site. Pick the photo that best illustrates this story.
 
+TODAY'S DATE: {$today}
 STORY HEADLINE: {$headline}
 STORY SUMMARY: {$summary}
 
@@ -7951,8 +8031,11 @@ CANDIDATE PHOTOS (title and tags written by the photographer):
 Rules:
 - Choose a real photograph that is directly about the story's subject (same kind of event, place, species or issue). A compelling, specific photo beats a generic one: prefer sharp, well-composed images with a clear subject, drama or human/animal interest over dull scenes.
 - Prefer photos of the story's main subject itself (the storm, animal, landscape or event) over side effects. For hurricanes and large storms, a satellite image of the storm is ideal.
+- A real photo or satellite image of the actual named event or place in the story (check titles and dates) beats a photo of a similar one.
+- The story is current news. An older event with the same name (storm names are reused, e.g. a 2020 storm when today is 2026) is a DIFFERENT event: prefer images dated close to today, and use an older one only as a generic illustration if nothing current fits.
 - Reject candidates that look like illustrations, drawings, maps, charts, logos, screenshots, products, AI-generated images, or photos mainly of identifiable people unrelated to the story.
 - Featured images are cropped to a wide (landscape) frame, so prefer wide photos. Choose a tall or square one only if it is clearly the best fit.
+- For wildlife and plant stories, prefer the same species, or at least one from the same region. Avoid a look-alike from another continent (e.g. an American turtle for an Australian story).
 - For stories about wild animals, reject photos of captive animals (zoos, enclosures, cages, fences, aquarium glass).
 - Reject dark or dim interiors, snapshots inside people's homes, and anything odd, unsettling or low quality. The photo leads a news story on the homepage.
 - If no candidate clearly fits the story, choose 0. A missing photo is better than an unrelated or generic one (e.g. plain water, sky or a random landscape).
