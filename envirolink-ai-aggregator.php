@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.55.1
+ * Version: 1.56.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.55.1');
+define('ENVIROLINK_VERSION', '1.56.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -293,6 +293,8 @@ class EnviroLink_AI_Aggregator {
         register_setting('envirolink_settings', 'envirolink_llm_model');
         register_setting('envirolink_settings', 'envirolink_llm_reasoning_effort');
         register_setting('envirolink_settings', 'envirolink_pexels_api_key');
+        register_setting('envirolink_settings', 'envirolink_openverse_client_id');
+        register_setting('envirolink_settings', 'envirolink_openverse_client_secret');
         register_setting('envirolink_settings', 'envirolink_post_category');
         register_setting('envirolink_settings', 'envirolink_post_status');
         register_setting('envirolink_settings', 'envirolink_update_existing');
@@ -349,6 +351,9 @@ class EnviroLink_AI_Aggregator {
             $reasoning_effort = isset($_POST['llm_reasoning_effort']) ? sanitize_text_field($_POST['llm_reasoning_effort']) : '';
             update_option('envirolink_llm_reasoning_effort', in_array($reasoning_effort, array('low', 'medium', 'high'), true) ? $reasoning_effort : '');
             update_option('envirolink_pexels_api_key', sanitize_text_field($_POST['pexels_api_key']));
+            update_option('envirolink_openverse_client_id', sanitize_text_field($_POST['openverse_client_id']));
+            update_option('envirolink_openverse_client_secret', sanitize_text_field($_POST['openverse_client_secret']));
+            delete_transient('envirolink_openverse_token'); // credentials may have changed
             update_option('envirolink_post_category', absint($_POST['post_category']));
             update_option('envirolink_post_status', sanitize_text_field($_POST['post_status']));
             update_option('envirolink_update_existing', isset($_POST['update_existing']) ? 'yes' : 'no');
@@ -841,7 +846,34 @@ class EnviroLink_AI_Aggregator {
                                        class="regular-text" />
                                 <p class="description">
                                     Get your free API key from <a href="https://www.pexels.com/api/" target="_blank">pexels.com/api</a><br>
-                                    Used to search for relevant images when enabled per-feed
+                                    Fallback photo source when Openverse has no good match
+                                </p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="openverse_client_id">Openverse Client ID</label>
+                            </th>
+                            <td>
+                                <input type="text" id="openverse_client_id" name="openverse_client_id"
+                                       value="<?php echo esc_attr(get_option('envirolink_openverse_client_id', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="openverse_client_secret">Openverse Client Secret</label>
+                            </th>
+                            <td>
+                                <input type="password" id="openverse_client_secret" name="openverse_client_secret"
+                                       value="<?php echo esc_attr(get_option('envirolink_openverse_client_secret', '')); ?>"
+                                       class="regular-text" autocomplete="off" />
+                                <p class="description">
+                                    Openverse searches openly licensed photos from Flickr, Wikimedia Commons, NASA and others.
+                                    Used first when a feed or the daily roundup searches for a photo; the photographer and license are credited under the image.
+                                    Without credentials, Openverse allows only a few searches per hour.
                                 </p>
                             </td>
                         </tr>
@@ -1298,7 +1330,7 @@ class EnviroLink_AI_Aggregator {
                                     <td>
                                         <label>
                                             <input type="checkbox" name="use_pexels_images" id="edit-use-pexels-images" value="1" />
-                                            Use Pexels images instead of RSS images
+                                            Search for an openly licensed photo (Openverse, then Pexels) instead of using the RSS image
                                         </label>
                                         <p class="description">
                                             When enabled, searches Pexels for relevant images using article keywords instead of using images from the RSS feed.<br>
@@ -5496,18 +5528,24 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                     $image_url = $this->extract_image_from_url($original_link);
                 }
 
-                // Check if this feed is configured to use Pexels images
-                $use_pexels = isset($feed['use_pexels_images']) && $feed['use_pexels_images'];
+                // Feeds with "search for a photo" enabled (setting key kept as use_pexels_images)
+                $use_photo_search = isset($feed['use_pexels_images']) && $feed['use_pexels_images'];
+                $image_credit = null; // set when the image comes from photo search
 
-                if ($use_pexels) {
-                    $this->log_message('→ Feed configured to use Pexels images, searching...');
-                    $pexels_data = $this->fetch_pexels_image($rewritten['title'], $rewritten['image_keywords'] ?? null);
+                if ($use_photo_search) {
+                    $this->log_message('→ Feed configured to search for a photo...');
+                    $found_image = $this->find_story_image(
+                        $rewritten['title'],
+                        wp_trim_words(wp_strip_all_tags($rewritten['content']), 60, '...'),
+                        $this->split_image_queries($rewritten['image_keywords'] ?? '', $rewritten['title'])
+                    );
 
-                    if ($pexels_data) {
-                        $this->log_message('→ ✓ Found Pexels image, will use instead of RSS image');
-                        $image_url = $pexels_data['url'];
+                    if ($found_image) {
+                        $this->log_message('→ ✓ Using ' . $found_image['source_label'] . ' photo instead of RSS image');
+                        $image_url = $found_image['url'];
+                        $image_credit = $found_image;
                     } else {
-                        $this->log_message('→ ✗ Pexels search failed, falling back to RSS image (if any)');
+                        $this->log_message('→ ✗ No suitable photo found, falling back to RSS image (if any)');
                     }
                 }
 
@@ -5605,7 +5643,10 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
 
                             // Update featured image if found
                             if ($image_url) {
-                                $this->set_featured_image_from_url($image_url, $post_id);
+                                $updated_attachment_id = $this->set_featured_image_from_url($image_url, $post_id);
+                                if ($updated_attachment_id && $image_credit) {
+                                    $this->apply_image_credit($updated_attachment_id, $image_credit);
+                                }
                             }
 
                             $total_updated++;
@@ -5749,6 +5790,9 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                             $attachment_id = $this->set_featured_image_from_url($image_url, $post_id);
                             if ($attachment_id) {
                                 $image_set_successfully = true;
+                                if ($image_credit) {
+                                    $this->apply_image_credit($attachment_id, $image_credit);
+                                }
                                 $this->log_message('    ✓ Featured image set successfully (ID: ' . $attachment_id . ')');
                             } else {
                                 $this->log_message('    ⚠ WARNING: Failed to set featured image - post will publish without image');
@@ -6631,7 +6675,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
      * Send a single-turn prompt to the configured AI provider.
      * Returns the response text, or WP_Error (code 'llm_http_<status>' for HTTP errors, so callers can spot 429s).
      */
-    private function call_llm($prompt, $max_tokens, $timeout = 60, $system = '') {
+    private function call_llm($prompt, $max_tokens, $timeout = 60, $system = '', $images = array()) {
         $config = $this->get_llm_config();
         $provider = $config['provider'];
         $api_key = $config['api_key'];
@@ -6651,7 +6695,16 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
             if ($system !== '') {
                 $messages[] = array('role' => 'system', 'content' => $system);
             }
-            $messages[] = array('role' => 'user', 'content' => $prompt);
+            if (empty($images)) {
+                $messages[] = array('role' => 'user', 'content' => $prompt);
+            } else {
+                // Vision request: text followed by images ("data:image/jpeg;base64,..." URIs)
+                $parts = array(array('type' => 'text', 'text' => $prompt));
+                foreach ($images as $data_uri) {
+                    $parts[] = array('type' => 'image_url', 'image_url' => array('url' => $data_uri, 'detail' => 'low'));
+                }
+                $messages[] = array('role' => 'user', 'content' => $parts);
+            }
 
             // Reasoning models (e.g. gpt-oss) spend hidden "thinking" tokens out of max_tokens before
             // writing the answer, so add headroom. Only tokens actually generated are billed.
@@ -6687,6 +6740,15 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                     array('role' => 'user', 'content' => $prompt)
                 )
             );
+            if (!empty($images)) {
+                $blocks = array(array('type' => 'text', 'text' => $prompt));
+                foreach ($images as $data_uri) {
+                    if (preg_match('#^data:(image/[a-z]+);base64,(.+)$#s', $data_uri, $m)) {
+                        $blocks[] = array('type' => 'image', 'source' => array('type' => 'base64', 'media_type' => $m[1], 'data' => $m[2]));
+                    }
+                }
+                $request['messages'][0]['content'] = $blocks;
+            }
             if ($system !== '') {
                 $request['system'] = $system;
             }
@@ -6782,14 +6844,15 @@ Original Content:
 Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
 2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
-3. Two to three image search keywords for finding a relevant stock photo
+3. Three photo search phrases for finding a real photograph that illustrates the story
 
 Image keyword rules:
 - Focus on the ENVIRONMENTAL or PHYSICAL subject (e.g., \"school bus emissions\", \"coral reef bleaching\", \"wildfire smoke\")
 - NEVER use names of people, politicians, or political parties
 - NEVER use organization names or acronyms (EPA, UN, WHO, etc.)
 - Prefer concrete, visual nouns: wildlife, landscapes, infrastructure, weather events
-- Keep to 2-3 words that would find a good nature/environment stock photo
+- Each phrase 2-4 words describing what a photographer would have shot (e.g. \"salmon swimming upstream\", \"dam removal river\", \"river salmon\"), from most specific to more general
+- Do NOT put place names in the phrases (no countries, states, cities or rivers): they shrink the search to almost nothing
 
 Headline capitalization rules (use Title Case):
 - Capitalize EVERY word EXCEPT: articles (a, an, the), conjunctions (and, but, or, nor, yet, so), and short prepositions (in, on, at, to, for, of, by, with, from)
@@ -6812,7 +6875,7 @@ IMPORTANT: Do NOT include any attribution, source credit, or byline statements i
 Format your response as:
 TITLE: [new headline]
 CONTENT: [rewritten content]
-IMAGE_KEYWORDS: [2-3 visual search terms]";
+IMAGE_KEYWORDS: [phrase 1; phrase 2; phrase 3]";
         
         $text = $this->call_llm($prompt, 1024, 60, $this->accuracy_rules() . "\n\n" . $this->human_style_rules());
         
@@ -7218,48 +7281,34 @@ IMAGE_KEYWORDS: [2-3 visual search terms]";
             $auto_fetch_unsplash = get_option('envirolink_roundup_auto_fetch_unsplash', 'no') === 'yes';
             $roundup_images = get_option('envirolink_roundup_images', array());
 
-            // STRATEGY 1: Pexels (if enabled)
+            // STRATEGY 1: Photo search - Openverse, then Pexels (if enabled)
             if ($auto_fetch_unsplash) {
-                $this->log_message('[PEXELS] Attempting to fetch from Pexels...');
-                // Pass roundup headline to get relevant image (instead of random generic photo)
-                $pexels_data = $this->fetch_pexels_image($post_title);
+                $this->log_message('[PHOTO] Searching for a photo of the lead story...');
+                $roundup_queries = ($ai_metadata && !empty($ai_metadata['image_queries']) && is_array($ai_metadata['image_queries']))
+                    ? $ai_metadata['image_queries'] : array();
+                $found_image = $this->find_story_image(
+                    preg_replace('/\s*—\s*Today.*$/u', '', $post_title),
+                    $dek,
+                    $this->split_image_queries(implode('; ', $roundup_queries), $post_title)
+                );
 
-                if ($pexels_data) {
-                    // Download and upload the image to WordPress media library (SAME AS FEED IMAGES)
-                    $this->log_message('[PEXELS] Downloading image: ' . $pexels_data['url']);
-                    $image_id = $this->set_featured_image_from_url($pexels_data['url'], $post_id);
-
+                if ($found_image) {
+                    $this->log_message('[PHOTO] Downloading ' . $found_image['source_label'] . ' image: ' . $found_image['url']);
+                    $image_id = $this->set_featured_image_from_url($found_image['url'], $post_id);
                     if ($image_id) {
-                        // Update attachment metadata with Pexels attribution
-                        $caption = sprintf(
-                            'Photo by <a href="%s" target="_blank" rel="noopener">%s</a> on <a href="%s" target="_blank" rel="noopener">Pexels</a>',
-                            esc_url($pexels_data['photo_link']),
-                            esc_html($pexels_data['photographer_name']),
-                            esc_url($pexels_data['pexels_link'])
-                        );
-
-                        wp_update_post(array(
-                            'ID' => $image_id,
-                            'post_excerpt' => $caption
-                        ));
-
-                        // Store attribution data on the POST
-                        update_post_meta($post_id, '_pexels_attribution', array(
-                            'photographer_name' => $pexels_data['photographer_name'],
-                            'photo_link' => $pexels_data['photo_link'],
-                            'pexels_link' => $pexels_data['pexels_link']
-                        ));
-
-                        $unsplash_succeeded = true; // Mark success (variable name kept for backward compat)
-                        $this->log_message('[PEXELS] ✓ Downloaded and set as featured image (ID: ' . $image_id . ')');
+                        $this->apply_image_credit($image_id, $found_image);
+                        $image_alt_text = $found_image['alt'];
+                        $unsplash_succeeded = true;
+                        $this->log_message('[PHOTO] ✓ Set as featured image (ID: ' . $image_id . ')');
                     } else {
-                        $this->log_message('[PEXELS] ✗ Failed to download/upload Pexels image');
+                        $this->log_message('[PHOTO] ✗ Failed to download/upload image');
                     }
                 } else {
-                    $this->log_message('[PEXELS] ✗ Pexels fetch failed (check error logs for details)');
+                    $this->log_message('[PHOTO] ✗ No suitable photo found');
                 }
+
             } else {
-                $this->log_message('[PEXELS] Auto-fetch is disabled');
+                $this->log_message('[PHOTO] Photo search is disabled');
             }
 
             // STRATEGY 2: Manual collection (if Unsplash disabled or failed)
@@ -7496,7 +7545,8 @@ Generate JSON output with these exact fields:
 {{
   \"headline\": \"MUST include 2-3 stories separated by punctuation, MUST end with full date '— Today's Environmental Briefing for {$date_string}' - no character limit\",
   \"dek\": \"35-55 words mentioning 2-3 distinct story hooks with specific details (can reference additional stories beyond headline)\",
-  \"image_alt\": \"≤120 characters, plain-English description for lead story image\"
+  \"image_alt\": \"≤120 characters, plain-English description for lead story image\",
+  \"image_queries\": [\"3 photo search phrases (2-4 words each) for a real photograph of the headline's lead story, most specific first, e.g. 'hurricane power outage', 'downed power lines', 'hurricane damage'. No place names, people or organizations.\"]
 }}
 
 IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the JSON object.";
@@ -7552,6 +7602,369 @@ IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanation, just the J
         $this->log_message('   Dek: ' . substr($metadata['dek'], 0, 80) . '...');
 
         return $metadata;
+    }
+
+    /**
+     * Turn the AI's image search phrases ("a; b; c" or "a, b, c") into a list of queries.
+     * Falls back to keywords from the headline when the AI gave none.
+     */
+    private function split_image_queries($keywords, $headline) {
+        $queries = array();
+        foreach (preg_split('/[;,\n]+/', (string) $keywords) as $q) {
+            $q = trim($q, " \t\"'[]");
+            if ($q !== '' && !in_array($q, $queries, true)) {
+                $queries[] = $q;
+            }
+        }
+        if (empty($queries)) {
+            $fallback = $this->extract_image_keywords($headline);
+            if ($fallback) {
+                $queries[] = $fallback;
+            }
+        }
+        return array_slice($queries, 0, 3);
+    }
+
+    /**
+     * Find a real, openly licensed photo for a story.
+     * Searches Openverse (Flickr, Wikimedia Commons, NASA, etc.) and, if nothing fits, Pexels;
+     * the AI picks the best candidate or rejects them all. Never falls back to a generic photo.
+     * Returns array(url, alt, source_label, credit_html) or false.
+     */
+    private function find_story_image($headline, $summary, $queries) {
+        if (empty($queries)) {
+            $this->log_message('  → [PHOTO] No search phrases available');
+            return false;
+        }
+        $this->log_message('  → [PHOTO] Search phrases: ' . implode(' | ', $queries));
+
+        $sources = array(
+            'openverse' => array($this, 'search_openverse_candidates'),
+            'pexels' => array($this, 'search_pexels_candidates')
+        );
+        foreach ($sources as $source_name => $search) {
+            $candidates = array();
+            $seen = array();
+            foreach ($queries as $query) {
+                foreach (call_user_func($search, $query) as $candidate) {
+                    if (!isset($seen[$candidate['url']])) {
+                        $seen[$candidate['url']] = true;
+                        $candidates[] = $candidate;
+                    }
+                }
+            }
+            $this->log_message('  → [PHOTO] ' . count($candidates) . ' candidates from ' . $source_name);
+            if (empty($candidates)) {
+                continue;
+            }
+
+            $choice = $this->choose_image_with_ai($headline, $summary, array_slice($candidates, 0, 20));
+            if ($choice) {
+                $this->log_message('  → [PHOTO] ✓ Chose: "' . $choice['title'] . '" (' . $choice['source_label'] . ', ' . $choice['license_label'] . ')');
+                return $choice;
+            }
+            $this->log_message('  → [PHOTO] AI rejected all ' . $source_name . ' candidates as not relevant');
+        }
+        return false;
+    }
+
+    /**
+     * Openverse OAuth token (cached ~12h). Empty string = no credentials, search anonymously.
+     */
+    private function get_openverse_token() {
+        $client_id = get_option('envirolink_openverse_client_id', '');
+        $client_secret = get_option('envirolink_openverse_client_secret', '');
+        if (empty($client_id) || empty($client_secret)) {
+            return '';
+        }
+        $token = get_transient('envirolink_openverse_token');
+        if ($token) {
+            return $token;
+        }
+        $response = wp_remote_post('https://api.openverse.org/v1/auth_tokens/token/', array(
+            'timeout' => 15,
+            'body' => array(
+                'grant_type' => 'client_credentials',
+                'client_id' => $client_id,
+                'client_secret' => $client_secret
+            )
+        ));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            $this->log_message('  → [OPENVERSE] ✗ Could not get access token, searching anonymously');
+            return '';
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if (empty($body['access_token'])) {
+            return '';
+        }
+        $expires = isset($body['expires_in']) ? max(60, intval($body['expires_in']) - 300) : 3600;
+        set_transient('envirolink_openverse_token', $body['access_token'], $expires);
+        return $body['access_token'];
+    }
+
+    /**
+     * Search Openverse for real photographs under licenses envirolink.org can use:
+     * public domain, CC0, CC BY, CC BY-SA and the non-commercial BY-NC / BY-NC-SA
+     * (the site is ad-free and non-commercial). No-derivatives licenses are excluded
+     * because WordPress crops and resizes featured images.
+     */
+    private function search_openverse_candidates($query) {
+        $headers = array('User-Agent' => 'EnviroLink-News-Aggregator/' . ENVIROLINK_VERSION . ' (+https://www.envirolink.org)');
+        $token = $this->get_openverse_token();
+        if ($token) {
+            $headers['Authorization'] = 'Bearer ' . $token;
+        }
+        $response = wp_remote_get('https://api.openverse.org/v1/images/?' . http_build_query(array(
+            'q' => $query,
+            'license' => 'cc0,pdm,by,by-sa,by-nc,by-nc-sa',
+            'category' => 'photograph',
+            'mature' => 'false',
+            'page_size' => 10
+        )), array('timeout' => 20, 'headers' => $headers));
+
+        if (is_wp_error($response)) {
+            $this->log_message('  → [OPENVERSE] ✗ ' . $response->get_error_message());
+            return array();
+        }
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            $this->log_message('  → [OPENVERSE] ✗ HTTP ' . $code . ' for "' . $query . '"');
+            return array();
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $candidates = array();
+        foreach ((isset($body['results']) ? $body['results'] : array()) as $item) {
+            if (empty($item['url']) || (isset($item['width']) && $item['width'] && $item['width'] < 800)) {
+                continue;
+            }
+            $tags = array();
+            foreach ((isset($item['tags']) ? $item['tags'] : array()) as $tag) {
+                if (!empty($tag['name'])) {
+                    $tags[] = $tag['name'];
+                }
+            }
+            $source = isset($item['source']) ? $item['source'] : (isset($item['provider']) ? $item['provider'] : '');
+            $license = isset($item['license']) ? strtolower($item['license']) : '';
+            $candidates[] = array(
+                'url' => $item['url'],
+                'title' => isset($item['title']) ? $item['title'] : '',
+                'description' => implode(', ', array_slice($tags, 0, 12)),
+                'creator' => isset($item['creator']) ? $item['creator'] : '',
+                'creator_url' => isset($item['creator_url']) ? $item['creator_url'] : '',
+                'landing_url' => isset($item['foreign_landing_url']) ? $item['foreign_landing_url'] : '',
+                'source_label' => $this->openverse_source_label($source),
+                'license_label' => $this->openverse_license_label($license, isset($item['license_version']) ? $item['license_version'] : ''),
+                'license_url' => isset($item['license_url']) ? $item['license_url'] : '',
+                'thumb_url' => isset($item['thumbnail']) ? $item['thumbnail'] : ''
+            );
+        }
+        return $candidates;
+    }
+
+    private function openverse_source_label($source) {
+        $labels = array('flickr' => 'Flickr', 'wikimedia' => 'Wikimedia Commons', 'nasa' => 'NASA', 'smithsonian' => 'Smithsonian');
+        if (isset($labels[$source])) {
+            return $labels[$source];
+        }
+        return $source !== '' ? ucwords(str_replace('_', ' ', $source)) : 'Openverse';
+    }
+
+    private function openverse_license_label($license, $version) {
+        if ($license === 'pdm' || $license === 'cc0') {
+            return $license === 'cc0' ? 'CC0' : 'Public domain';
+        }
+        return 'CC ' . strtoupper($license) . ($version !== '' ? ' ' . $version : '');
+    }
+
+    /**
+     * Pexels search returning candidates in the same shape as Openverse (fallback source)
+     */
+    private function search_pexels_candidates($query) {
+        $api_key = get_option('envirolink_pexels_api_key', '');
+        if (empty($api_key)) {
+            return array();
+        }
+        $response = wp_remote_get('https://api.pexels.com/v1/search?' . http_build_query(array(
+            'query' => $query,
+            'orientation' => 'landscape',
+            'per_page' => 8
+        )), array('timeout' => 15, 'headers' => array('Authorization' => $api_key)));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return array();
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $candidates = array();
+        foreach ((isset($body['photos']) ? $body['photos'] : array()) as $photo) {
+            if (empty($photo['src']['large'])) {
+                continue;
+            }
+            $candidates[] = array(
+                'url' => $photo['src']['large'],
+                'title' => isset($photo['alt']) ? $photo['alt'] : '',
+                'description' => '',
+                'creator' => isset($photo['photographer']) ? $photo['photographer'] : '',
+                'creator_url' => isset($photo['photographer_url']) ? $photo['photographer_url'] : '',
+                'landing_url' => isset($photo['url']) ? $photo['url'] : '',
+                'source_label' => 'Pexels',
+                'license_label' => 'Pexels License',
+                'license_url' => 'https://www.pexels.com/license/',
+                'thumb_url' => isset($photo['src']['small']) ? $photo['src']['small'] : ''
+            );
+        }
+        return $candidates;
+    }
+
+    /**
+     * Ask the AI to pick the candidate photo that best illustrates the story, or none.
+     * Returns the chosen candidate with 'alt' (describing what the photo actually shows)
+     * and 'credit_html', or false.
+     */
+    private function choose_image_with_ai($headline, $summary, $candidates) {
+        // Let the AI look at the photos: fetch small thumbnails for up to 12 candidates.
+        // Candidates whose thumbnail can't be fetched are dropped from a vision request.
+        $images = array();
+        $with_thumbs = array();
+        foreach (array_slice($candidates, 0, 12) as $c) {
+            $data_uri = $this->fetch_thumbnail_data_uri(isset($c['thumb_url']) ? $c['thumb_url'] : '');
+            if ($data_uri) {
+                $images[] = $data_uri;
+                $with_thumbs[] = $c;
+            }
+        }
+        if (count($with_thumbs) >= 3) {
+            $choice = $this->choose_image_from_list($headline, $summary, $with_thumbs, $images);
+            if ($choice !== null) {
+                return $choice;
+            }
+            $this->log_message('  → [PHOTO] Vision choice unavailable, choosing from titles and tags');
+        }
+        $choice = $this->choose_image_from_list($headline, $summary, $candidates, array());
+        return $choice ? $choice : false;
+    }
+
+    /**
+     * Download a thumbnail and return it as a base64 data URI (max ~300 KB), or false
+     */
+    private function fetch_thumbnail_data_uri($url) {
+        if (empty($url)) {
+            return false;
+        }
+        $headers = array('User-Agent' => 'EnviroLink-News-Aggregator/' . ENVIROLINK_VERSION . ' (+https://www.envirolink.org)');
+        if (strpos($url, 'api.openverse.org') !== false) {
+            $token = $this->get_openverse_token();
+            if ($token) {
+                $headers['Authorization'] = 'Bearer ' . $token;
+            }
+        }
+        $response = wp_remote_get($url, array('timeout' => 10, 'headers' => $headers));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return false;
+        }
+        $body = wp_remote_retrieve_body($response);
+        if ($body === '' || strlen($body) > 300000) {
+            return false;
+        }
+        $type = 'image/jpeg';
+        if (substr($body, 0, 8) === "\x89PNG\r\n\x1a\n") {
+            $type = 'image/png';
+        } elseif (substr($body, 0, 4) === 'RIFF' && substr($body, 8, 4) === 'WEBP') {
+            $type = 'image/webp';
+        } elseif (substr($body, 0, 3) !== "\xFF\xD8\xFF") {
+            return false; // not an image we recognise
+        }
+        return 'data:' . $type . ';base64,' . base64_encode($body);
+    }
+
+    /**
+     * One AI call choosing among candidates. With $images, the photos are attached in list order.
+     * Returns the chosen candidate, false when the AI chose none, or null when the call itself failed.
+     */
+    private function choose_image_from_list($headline, $summary, $candidates, $images) {
+        $list = '';
+        foreach ($candidates as $i => $c) {
+            $list .= ($i + 1) . '. Title: ' . $c['title'];
+            if ($c['description'] !== '') {
+                $list .= ' | Tags: ' . $c['description'];
+            }
+            $list .= ' | Source: ' . $c['source_label'] . "\n";
+        }
+
+        $attached_note = empty($images) ? '' : "\nThe photos themselves are attached in the same order (first image = photo 1). Judge them by what you see, using the titles and tags as context.\n";
+
+        $prompt = "You are the photo editor for EnviroLink.org, an environmental news site. Pick the photo that best illustrates this story.
+
+STORY HEADLINE: {$headline}
+STORY SUMMARY: {$summary}
+
+CANDIDATE PHOTOS (title and tags written by the photographer):
+{$list}{$attached_note}
+Rules:
+- Choose a real photograph that is directly about the story's subject (same kind of event, place, species or issue). A compelling, specific photo beats a generic one: prefer sharp, well-composed images with a clear subject, drama or human/animal interest over dull scenes.
+- Reject candidates that look like illustrations, drawings, maps, charts, logos, screenshots, products, AI-generated images, or photos mainly of identifiable people unrelated to the story.
+- If no candidate clearly fits the story, choose 0. A missing photo is better than an unrelated or generic one (e.g. plain water, sky or a random landscape).
+- The alt text must describe what the chosen photo shows. Do not claim it shows the specific event in the story unless the title says so.
+
+Respond ONLY with JSON: {\"choice\": <number, or 0 for none>, \"alt\": \"<alt text, max 120 characters>\"}";
+
+        $text = $this->call_llm($prompt, 300, 90, $this->accuracy_rules(), $images);
+        if (is_wp_error($text)) {
+            $this->log_message('  → [PHOTO] ✗ AI photo choice failed: ' . $text->get_error_message());
+            return null;
+        }
+        $text = trim(preg_replace('/```json\s*|\s*```/', '', $text));
+        $result = json_decode($text, true);
+        if (!is_array($result) || !isset($result['choice'])) {
+            $this->log_message('  → [PHOTO] ✗ Could not read AI photo choice: ' . substr($text, 0, 120));
+            return null;
+        }
+        $index = intval($result['choice']) - 1;
+        if ($index < 0 || !isset($candidates[$index])) {
+            return false;
+        }
+
+        $chosen = $candidates[$index];
+        $alt = isset($result['alt']) ? trim($result['alt']) : '';
+        $chosen['alt'] = $alt !== '' ? mb_substr($alt, 0, 120) : $chosen['title'];
+        $chosen['credit_html'] = $this->build_photo_credit($chosen);
+        return $chosen;
+    }
+
+    /**
+     * "Photo: Creator / Source (License)" with links, shown as the image caption.
+     * CC licenses require crediting the author, source and license.
+     */
+    private function build_photo_credit($c) {
+        $creator = $c['creator'] !== '' ? esc_html($c['creator']) : 'Unknown photographer';
+        if ($c['creator_url'] !== '') {
+            $creator = '<a href="' . esc_url($c['creator_url']) . '" target="_blank" rel="noopener">' . $creator . '</a>';
+        }
+        $source = esc_html($c['source_label']);
+        if ($c['landing_url'] !== '') {
+            $source = '<a href="' . esc_url($c['landing_url']) . '" target="_blank" rel="noopener">' . $source . '</a>';
+        }
+        $license = esc_html($c['license_label']);
+        if ($c['license_url'] !== '') {
+            $license = '<a href="' . esc_url($c['license_url']) . '" target="_blank" rel="noopener">' . $license . '</a>';
+        }
+        return 'Photo: ' . $creator . ' / ' . $source . ' (' . $license . ')';
+    }
+
+    /**
+     * Store the credit as the attachment caption and use the AI's description as alt text
+     */
+    private function apply_image_credit($attachment_id, $image) {
+        wp_update_post(array(
+            'ID' => $attachment_id,
+            'post_excerpt' => $image['credit_html']
+        ));
+        update_post_meta($attachment_id, '_wp_attachment_image_alt', $image['alt']);
+        update_post_meta($attachment_id, '_envirolink_photo_source', array(
+            'source' => $image['source_label'],
+            'license' => $image['license_label'],
+            'landing_url' => $image['landing_url'],
+            'creator' => $image['creator']
+        ));
+        $this->log_message('    → Photo credit: ' . wp_strip_all_tags($image['credit_html']));
     }
 
     /**
