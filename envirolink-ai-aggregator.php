@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.58.0
+ * Version: 1.58.1
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.58.0');
+define('ENVIROLINK_VERSION', '1.58.1');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -5509,7 +5509,26 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                 // Rewrite using AI (unless we only need image)
                 $rewritten = null;
                 if ($needs_ai_update) {
-                    $rewritten = $this->rewrite_with_ai($original_title, $original_text);
+                    // Many feeds send only a teaser or a bare headline. Fetch the article page
+                    // for the full text; skip the story if there still isn't enough to write from
+                    // (the AI otherwise publishes "details not provided" stubs).
+                    // Done after the content hash so the hash still tracks the RSS item only.
+                    $source_text = $original_text;
+                    if (str_word_count(wp_strip_all_tags($source_text)) < 150 && !empty($original_link)) {
+                        $page_text = $this->fetch_article_text($original_link);
+                        if (str_word_count($page_text) > str_word_count(wp_strip_all_tags($source_text))) {
+                            $this->log_message('  → RSS text was short; using article page text (' . str_word_count($page_text) . ' words)');
+                            $source_text = $page_text;
+                        }
+                    }
+                    $source_words = str_word_count(wp_strip_all_tags($source_text));
+                    if ($source_words < 80) {
+                        $this->log_message('  → SKIPPED: only ' . $source_words . ' words of source text, not enough to write an article');
+                        $total_skipped++;
+                        continue;
+                    }
+
+                    $rewritten = $this->rewrite_with_ai($original_title, $source_text);
 
                     if (!$rewritten) {
                         continue;
@@ -6078,6 +6097,70 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
 
         $this->log_message('  → No image found (tried: enclosure, media tags, content, description)');
         return null;
+    }
+
+    /**
+     * Fetch an article page and return its body text (plain text, capped at ~1500 words).
+     * Tries JSON-LD articleBody, then paragraphs inside <article>, then all paragraphs.
+     * Returns '' on failure (paywall, blocked, no article markup).
+     */
+    private function fetch_article_text($url) {
+        $response = wp_remote_get($url, array(
+            'timeout' => 15,
+            'user-agent' => 'Mozilla/5.0 (compatible; EnviroLink News Aggregator; +https://envirolink.org)',
+            'headers' => array('Accept' => 'text/html')
+        ));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return '';
+        }
+        $html = wp_remote_retrieve_body($response);
+        if (empty($html) || !class_exists('DOMDocument')) {
+            return '';
+        }
+
+        $dom = new DOMDocument();
+        libxml_use_internal_errors(true);
+        $dom->loadHTML('<?xml encoding="utf-8" ?>' . $html);
+        libxml_clear_errors();
+        $xpath = new DOMXPath($dom);
+
+        $text = '';
+        foreach ($xpath->query('//script[@type="application/ld+json"]') as $node) {
+            $data = json_decode($node->textContent, true);
+            if (!is_array($data)) {
+                continue;
+            }
+            $entries = isset($data['@graph']) ? $data['@graph'] : (isset($data[0]) ? $data : array($data));
+            foreach ($entries as $entry) {
+                if (is_array($entry) && !empty($entry['articleBody']) && is_string($entry['articleBody'])) {
+                    $text = $entry['articleBody'];
+                    break 2;
+                }
+            }
+        }
+
+        if (str_word_count($text) < 80) {
+            $paragraphs = $xpath->query('//article//p');
+            if ($paragraphs->length < 3) {
+                $paragraphs = $xpath->query('//body//p');
+            }
+            $kept = array();
+            foreach ($paragraphs as $p) {
+                $line = trim(preg_replace('/\s+/u', ' ', $p->textContent));
+                // Body paragraphs only: skip captions, bylines, newsletter/cookie blurbs
+                if (str_word_count($line) >= 12 && !preg_match('/cookie|subscribe|newsletter|sign up|all rights reserved/i', $line)) {
+                    $kept[] = $line;
+                }
+            }
+            $text = implode("\n\n", array_unique($kept));
+        }
+
+        $text = trim(html_entity_decode(wp_strip_all_tags($text), ENT_QUOTES, 'UTF-8'));
+        $words = preg_split('/\s+/u', $text);
+        if (count($words) > 1500) {
+            $text = implode(' ', array_slice($words, 0, 1500));
+        }
+        return $text;
     }
 
     /**
@@ -6870,6 +6953,12 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
      * Rewrite content using the configured AI provider
      */
     private function rewrite_with_ai($title, $content) {
+        // Match length to how much source there is: padding a short source is how
+        // "details not provided" filler (or invented background) gets in
+        $length = str_word_count(wp_strip_all_tags($content)) < 250
+            ? '1-2 paragraphs, around 80-150 words, and never longer than the source facts support'
+            : '2-4 paragraphs, around 200-300 words';
+
         $prompt = "You are a news editor for EnviroLink.org, an environmental news aggregation website. Your task is to rewrite the following environmental news article in a clear, engaging style while maintaining factual accuracy.
 
 Original Title: {$title}
@@ -6879,7 +6968,7 @@ Original Content:
 
 Please provide:
 1. A new, compelling headline (no length limit - use whatever length needed for clarity)
-2. A rewritten article summary/content (2-4 paragraphs, around 200-300 words)
+2. A rewritten article summary/content ({$length})
 3. Three photo search phrases for finding a real photograph that illustrates the story
 4. The story's specific named subject for an encyclopedia-style photo search, if it has one
 
@@ -6907,6 +6996,8 @@ Examples:
 
 Keep the core facts and maintain journalistic integrity. Make it informative and accessible to a general audience interested in environmental issues.
 
+IMPORTANT: Never write about the source material itself. Do NOT say that details are missing, \"not provided\", \"not specified\" or \"not available\", and do not mention \"the supplied material\", \"the available information\" or similar. Write only what the story says. If the source has too little to write a real news story (for example, only a headline), reply with the single word SKIP and nothing else.
+
 IMPORTANT: Do NOT include any attribution, source credit, or byline statements in the content. Do NOT add lines like \"This article was written by...\" or \"This is a summary of an article from...\" or any similar attribution. The article should read as original editorial content with no reference to its source.
 
 
@@ -6925,6 +7016,16 @@ IMAGE_SUBJECT: [ONE specific named event, place or species, e.g. \"Hurricane Isa
             return false;
         }
         
+        if (preg_match('/^\s*SKIP\b/', $text)) {
+            $this->log_message('  → SKIPPED: AI found too little in the source to write an article');
+            return false;
+        }
+        // Safety net: never publish copy that talks about missing source details
+        if (preg_match($this->source_meta_pattern(), $text, $meta_match)) {
+            $this->log_message('  → SKIPPED: AI output talks about missing source details ("' . $meta_match[0] . '")');
+            return false;
+        }
+
         // Parse response
         if (preg_match('/TITLE:\s*(.+?)(?:\n|$)/s', $text, $title_match) &&
             preg_match('/CONTENT:\s*(.+?)(?:\nIMAGE_(?:KEYWORDS|SUBJECT):|\s*$)/s', $text, $content_match)) {
@@ -6962,6 +7063,14 @@ IMAGE_SUBJECT: [ONE specific named event, place or species, e.g. \"Hurricane Isa
         }
 
         return false;
+    }
+
+    /**
+     * Phrases that only appear when the AI writes about its input instead of the story
+     * ("The supplied material does not include...", "No further details were provided").
+     */
+    private function source_meta_pattern() {
+        return '/\b(?:supplied|provided|available|source) (?:material|information|text|details|account|content)\b|\b(?:details|information) (?:are|is|were|was) not (?:provided|available|specified|included)|\bno (?:further |other |more )?(?:details|information) (?:are|is|were|was) (?:provided|given|included|available)|\bthe (?:material|information|text|details) (?:provided|supplied|available)\b|\bnot (?:provided|specified) in the (?:source|material)/i';
     }
 
     /**
