@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.58.2
+ * Version: 1.58.3
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.58.2');
+define('ENVIROLINK_VERSION', '1.58.3');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -76,6 +76,7 @@ class EnviroLink_AI_Aggregator {
         add_action('wp_ajax_envirolink_run_feed', array($this, 'ajax_run_feed'));
         add_action('wp_ajax_envirolink_get_progress', array($this, 'ajax_get_progress'));
         add_action('wp_ajax_envirolink_get_saved_log', array($this, 'ajax_get_saved_log'));
+        add_action('wp_ajax_envirolink_view_log', array($this, 'ajax_view_log'));
         add_action('wp_ajax_envirolink_update_feed_images', array($this, 'ajax_update_feed_images'));
         add_action('wp_ajax_envirolink_fix_post_dates', array($this, 'ajax_fix_post_dates'));
         add_action('wp_ajax_envirolink_cleanup_duplicates', array($this, 'ajax_cleanup_duplicates'));
@@ -637,6 +638,10 @@ class EnviroLink_AI_Aggregator {
                             <span class="dashicons dashicons-visibility" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle; margin-top: 2px;"></span>
                             Show Detailed Log
                         </button>
+                        <a class="button button-small" target="_blank" rel="noopener" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-ajax.php?action=envirolink_view_log'), 'envirolink_view_log')); ?>">
+                            <span class="dashicons dashicons-external" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle; margin-top: 2px;"></span>
+                            Open Full Log
+                        </a>
                         <div id="envirolink-log-container" style="display: none; margin-top: 10px; max-height: 300px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 12px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6;">
                             <div id="envirolink-log-content"></div>
                         </div>
@@ -2687,6 +2692,38 @@ class EnviroLink_AI_Aggregator {
     }
 
     /**
+     * AJAX (GET, opened in a new window): the full log as a page of its own.
+     * Shows the running log while a run is active (refreshing every 5s), else the last saved log.
+     */
+    public function ajax_view_log() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        check_admin_referer('envirolink_view_log');
+
+        $progress = get_transient('envirolink_progress');
+        $active = ($progress !== false && !empty($progress['log']));
+        $log = $active ? $progress['log'] : get_option('envirolink_last_run_log', array());
+
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html><head><meta charset="utf-8"><title>EnviroLink Log</title>';
+        if ($active) {
+            echo '<meta http-equiv="refresh" content="5">';
+        }
+        echo '<style>body{margin:0;font:12px/1.6 Menlo,Consolas,monospace;background:#fff;color:#1d2327}'
+            . 'header{position:sticky;top:0;background:#f0f0f1;border-bottom:1px solid #ccc;padding:8px 16px;font-family:sans-serif}'
+            . 'pre{margin:0;padding:12px 16px;white-space:pre-wrap;word-break:break-word}</style></head><body>';
+        echo '<header><strong>' . ($active ? 'Run in progress' : 'Last run') . '</strong> &middot; ' . count($log) . ' lines'
+            . ($active ? ' &middot; refreshes every 5 seconds' : '') . '</header>';
+        echo '<pre>' . esc_html(empty($log) ? 'No log saved yet.' : implode("\n", $log)) . '</pre>';
+        if ($active) {
+            echo '<script>window.scrollTo(0, document.body.scrollHeight);</script>';
+        }
+        echo '</body></html>';
+        exit;
+    }
+
+    /**
      * AJAX: Fix post dates to match RSS publication dates
      */
     public function ajax_fix_post_dates() {
@@ -3857,9 +3894,10 @@ class EnviroLink_AI_Aggregator {
         }
         $progress['log'][] = '[' . wp_date('H:i:s') . '] ' . $message;
 
-        // Keep only last 100 messages to avoid memory issues
-        if (count($progress['log']) > 100) {
-            $progress['log'] = array_slice($progress['log'], -100);
+        // Cap the log (a full run plus duplicate cleanup is a few hundred lines;
+        // the old 100-line cap pushed each run's article lines out)
+        if (count($progress['log']) > 2000) {
+            $progress['log'] = array_slice($progress['log'], -2000);
         }
 
         set_transient('envirolink_progress', $progress, 300);
