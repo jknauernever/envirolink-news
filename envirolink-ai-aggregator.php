@@ -3,7 +3,7 @@
  * Plugin Name: EnviroLink AI News Aggregator
  * Plugin URI: https://envirolink.org
  * Description: Automatically fetches environmental news from RSS feeds, rewrites content using AI, and publishes to WordPress
- * Version: 1.57.0
+ * Version: 1.58.0
  * Author: EnviroLink
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ENVIROLINK_VERSION', '1.57.0');
+define('ENVIROLINK_VERSION', '1.58.0');
 define('ENVIROLINK_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ENVIROLINK_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -294,6 +294,7 @@ class EnviroLink_AI_Aggregator {
         register_setting('envirolink_settings', 'envirolink_llm_model');
         register_setting('envirolink_settings', 'envirolink_llm_reasoning_effort');
         register_setting('envirolink_settings', 'envirolink_pexels_api_key');
+        register_setting('envirolink_settings', 'envirolink_ranking_feeds');
         register_setting('envirolink_settings', 'envirolink_openverse_client_id');
         register_setting('envirolink_settings', 'envirolink_openverse_client_secret');
         register_setting('envirolink_settings', 'envirolink_post_category');
@@ -362,6 +363,16 @@ class EnviroLink_AI_Aggregator {
             update_option('envirolink_auto_cleanup_duplicates', isset($_POST['auto_cleanup_duplicates']) ? 'yes' : 'no');
             update_option('envirolink_keyword_daily_limit', absint($_POST['keyword_daily_limit']));
             update_option('envirolink_daily_roundup_enabled', isset($_POST['daily_roundup_enabled']) ? 'yes' : 'no');
+            if (isset($_POST['ranking_feeds'])) {
+                $ranking_feeds = array();
+                foreach (preg_split('/[\r\n]+/', wp_unslash($_POST['ranking_feeds'])) as $line) {
+                    $url = esc_url_raw(trim($line));
+                    if ($url !== '') {
+                        $ranking_feeds[] = $url;
+                    }
+                }
+                update_option('envirolink_ranking_feeds', implode("\n", $ranking_feeds));
+            }
             update_option('envirolink_roundup_auto_fetch_unsplash', isset($_POST['roundup_auto_fetch_unsplash']) ? 'yes' : 'no');
             update_option('envirolink_cron_secret_key', sanitize_text_field($_POST['cron_secret_key']));
             update_option('envirolink_ontology_enabled', isset($_POST['ontology_enabled']) ? 'yes' : 'no');
@@ -996,7 +1007,17 @@ class EnviroLink_AI_Aggregator {
                                            <?php checked(get_option('envirolink_daily_roundup_enabled', 'no'), 'yes'); ?> />
                                     Enable daily editorial roundup post
                                 </label>
-                                <p class="description">When enabled, an AI-generated editorial roundup of the past 24 hours' environmental news will be published automatically at 8:00 AM ET daily. The post will have a balanced, humanistic tone and appear as original content titled "Daily Environmental News Roundup by the EnviroLink Team - [Date]". The aggregator will run first to ensure all recent articles are included.</p>
+                                <p class="description">Published automatically at 8:00 AM ET. The roundup summarizes the 3–5 most important stories of the past day (ranked by how many outlets are covering them), each linking to its EnviroLink article, followed by an "Also today" list of other headlines. The aggregator runs first so recent articles are included.</p>
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row">
+                                <label for="ranking_feeds">Coverage sources for ranking</label>
+                            </th>
+                            <td>
+                                <textarea id="ranking_feeds" name="ranking_feeds" rows="8" class="large-text code"><?php echo esc_textarea($this->get_ranking_feed_urls_text()); ?></textarea>
+                                <p class="description">RSS feeds used <strong>only to judge which stories matter most</strong>: a story covered by more of these outlets (plus your article feeds) ranks higher in the roundup. Their articles are never published or rewritten. One feed URL per line.</p>
                             </td>
                         </tr>
 
@@ -6674,6 +6695,18 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
      * Returns the response text, or WP_Error (code 'llm_http_<status>' for HTTP errors, so callers can spot 429s).
      */
     private function call_llm($prompt, $max_tokens, $timeout = 60, $system = '', $images = array()) {
+        // One retry, after a short pause, for transient failures: empty answer, dropped connection,
+        // rate limit (429) or server error (5xx). Other errors (bad key, unknown model) fail at once.
+        $result = $this->call_llm_once($prompt, $max_tokens, $timeout, $system, $images);
+        if (is_wp_error($result) && preg_match('/^(llm_empty|llm_request_failed|llm_http_(429|5\d\d))$/', $result->get_error_code())) {
+            $this->log_message('  ⚠ AI request failed (' . $result->get_error_message() . '), retrying once...');
+            sleep(5);
+            $result = $this->call_llm_once($prompt, $max_tokens, $timeout, $system, $images);
+        }
+        return $result;
+    }
+
+    private function call_llm_once($prompt, $max_tokens, $timeout = 60, $system = '', $images = array()) {
         $config = $this->get_llm_config();
         $provider = $config['provider'];
         $api_key = $config['api_key'];
@@ -6787,8 +6820,13 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         if (!is_string($text) || trim($text) === '') {
-            error_log('EnviroLink: AI response missing text (' . $label . ')');
-            return new WP_Error('llm_empty', $label . ': response missing text');
+            // Say why the model stopped (e.g. "length" = ran out of tokens while reasoning, "content_filter")
+            $reason = isset($body['choices'][0]['finish_reason']) ? $body['choices'][0]['finish_reason'] : (isset($body['stop_reason']) ? $body['stop_reason'] : 'unknown');
+            if (!empty($body['choices'][0]['message']['refusal'])) {
+                $reason .= ', refusal: ' . $body['choices'][0]['message']['refusal'];
+            }
+            error_log('EnviroLink: AI response missing text (' . $label . ', stop reason: ' . $reason . ')');
+            return new WP_Error('llm_empty', $label . ': response missing text (stop reason: ' . $reason . ')');
         }
 
         // Some models wrap the TITLE:/CONTENT:/IMAGE_KEYWORDS: markers in markdown bold, which breaks parsing
@@ -7080,7 +7118,9 @@ IMAGE_SUBJECT: [ONE specific named event, place or species, e.g. \"Hurricane Isa
                 'original_title' => $original_title,
                 'source' => $source_name,
                 'excerpt' => wp_trim_words($article->post_content, 50, '...'),
-                'url' => get_permalink($article->ID)
+                'url' => get_permalink($article->ID),
+                'post_id' => $article->ID,
+                'full_text' => wp_trim_words(wp_strip_all_tags($article->post_content), 450, '...')
             );
         }
 
@@ -7106,7 +7146,21 @@ IMAGE_SUBJECT: [ONE specific named event, place or species, e.g. \"Hurricane Isa
             return;
         }
 
-        $roundup_content = $this->generate_roundup_with_ai($article_summaries);
+        // Rank stories by how many outlets cover them, then write the top 3-5 + "Also today"
+        $ranking = $this->rank_roundup_stories($article_summaries, $this->collect_coverage_headlines());
+        $roundup_content = $ranking ? $this->write_ranked_roundup($article_summaries, $ranking) : false;
+
+        if ($roundup_content) {
+            // Headline, dek and photo follow the ranked order (lead story first)
+            $ranked_summaries = array();
+            foreach (array_merge($ranking['top'], $ranking['also']) as $i) {
+                $ranked_summaries[] = $article_summaries[$i];
+            }
+            $article_summaries = $ranked_summaries;
+        } else {
+            $this->log_message('⚠ Ranked roundup failed - falling back to the editorial roundup prompt');
+            $roundup_content = $this->generate_roundup_with_ai($article_summaries);
+        }
 
         if (!$roundup_content) {
             $this->log_message('✗ AI failed to generate roundup content');
@@ -7488,6 +7542,254 @@ Stay within 600 words.";
 
         // If parsing fails, return the raw content
         return $text;
+    }
+
+    /**
+     * Feeds used only to judge story importance for the roundup (never published).
+     */
+    private function get_ranking_feed_urls_text() {
+        $saved = get_option('envirolink_ranking_feeds', false);
+        if ($saved !== false) {
+            return $saved;
+        }
+        return implode("\n", array(
+            'https://rss.nytimes.com/services/xml/rss/nyt/Climate.xml',
+            'https://insideclimatenews.org/feed/',
+            'https://www.carbonbrief.org/feed/',
+            'https://e360.yale.edu/feed.xml',
+            'https://feeds.npr.org/1025/rss.xml',
+            'https://www.theverge.com/rss/climate-change/index.xml',
+            'https://www.ecowatch.com/rss',
+            'https://www.theguardian.com/environment/rss',
+            // General news: signals which environmental events are big enough to make the main news
+            'https://feeds.npr.org/1001/rss.xml',
+            'https://rss.nytimes.com/services/xml/rss/nyt/US.xml',
+            'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+            'https://feeds.bbci.co.uk/news/world/rss.xml'
+        ));
+    }
+
+    /**
+     * Recent headlines from an RSS or Atom feed: array of (source, title, summary).
+     * Parsed directly (not via fetch_feed) so items older than $hours can be dropped cheaply.
+     */
+    private function fetch_recent_feed_headlines($url, $source_name = '', $hours = 36, $max = 25) {
+        $response = wp_remote_get($url, array(
+            'timeout' => 15,
+            'headers' => array('User-Agent' => 'EnviroLink-News-Aggregator/' . ENVIROLINK_VERSION . ' (+https://www.envirolink.org)')
+        ));
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return array();
+        }
+        $previous = libxml_use_internal_errors(true);
+        $xml = simplexml_load_string(wp_remote_retrieve_body($response));
+        libxml_use_internal_errors($previous);
+        if (!$xml) {
+            return array();
+        }
+        if ($source_name === '') {
+            $source_name = (string) ($xml->channel->title ?? $xml->title ?? parse_url($url, PHP_URL_HOST));
+        }
+        $entries = isset($xml->channel->item) ? $xml->channel->item : (isset($xml->entry) ? $xml->entry : array());
+        $cutoff = time() - $hours * HOUR_IN_SECONDS;
+        $items = array();
+        foreach ($entries as $entry) {
+            $date = (string) ($entry->pubDate ?? '');
+            if ($date === '') {
+                $date = (string) ($entry->published ?? $entry->updated ?? '');
+            }
+            $timestamp = $date !== '' ? strtotime($date) : false;
+            if ($timestamp && $timestamp < $cutoff) {
+                continue;
+            }
+            $title = trim(html_entity_decode(wp_strip_all_tags((string) $entry->title), ENT_QUOTES));
+            if ($title === '') {
+                continue;
+            }
+            $summary = (string) ($entry->description ?? $entry->summary ?? '');
+            $items[] = array(
+                'source' => $source_name,
+                'title' => $title,
+                'summary' => wp_trim_words(html_entity_decode(wp_strip_all_tags($summary), ENT_QUOTES), 20, '...')
+            );
+            if (count($items) >= $max) {
+                break;
+            }
+        }
+        return $items;
+    }
+
+    /**
+     * Headlines from the past ~36 hours across the article feeds AND the ranking-only feeds.
+     * Includes stories the aggregator skipped (duplicates, keyword limit), which is the point:
+     * those are often the stories everyone is covering.
+     */
+    private function collect_coverage_headlines() {
+        $items = array();
+        foreach (get_option('envirolink_feeds', array()) as $feed) {
+            if (!empty($feed['enabled']) && !empty($feed['url'])) {
+                $items = array_merge($items, $this->fetch_recent_feed_headlines($feed['url'], isset($feed['name']) ? $feed['name'] : ''));
+            }
+        }
+        foreach (preg_split('/[\r\n]+/', $this->get_ranking_feed_urls_text()) as $url) {
+            $url = trim($url);
+            if ($url !== '') {
+                $items = array_merge($items, $this->fetch_recent_feed_headlines($url));
+            }
+        }
+        $sources = array_unique(wp_list_pluck($items, 'source'));
+        $this->log_message('→ Coverage check: ' . count($items) . ' recent headlines from ' . count($sources) . ' outlets');
+        return array_slice($items, 0, 200);
+    }
+
+    /**
+     * Group EnviroLink articles and other outlets' headlines into stories and rank them by how
+     * many distinct outlets cover each story, then by significance.
+     * Returns array('top' => [article indexes], 'also' => [article indexes], 'outlets' => [index => [names]]) or false.
+     */
+    private function rank_roundup_stories($articles, $coverage) {
+        $article_list = '';
+        foreach ($articles as $i => $a) {
+            $article_list .= 'A' . ($i + 1) . '. [' . ($a['source'] !== '' ? $a['source'] : 'unknown') . '] ' . $a['title'] . ' — ' . wp_trim_words($a['excerpt'], 25, '...') . "\n";
+        }
+        $coverage_list = '';
+        foreach ($coverage as $i => $c) {
+            $coverage_list .= 'C' . ($i + 1) . '. [' . $c['source'] . '] ' . $c['title'] . ($c['summary'] !== '' ? ' — ' . $c['summary'] : '') . "\n";
+        }
+
+        $prompt = "You are the news editor of EnviroLink.org, an environmental news site, choosing today's top stories.
+
+A) ENVIROLINK ARTICLES published in the past day (original outlet in brackets):
+{$article_list}
+B) HEADLINES FROM OTHER OUTLETS in the same period (outlet in brackets):
+{$coverage_list}
+Task:
+1. Group everything into stories. A story is one specific event or development (e.g. one hurricane, one court ruling, one new study), not a broad theme.
+2. Keep only stories that include at least one A article.
+3. For each story list the A article numbers and every DISTINCT outlet covering it (outlets of its A articles plus outlets of matching B headlines). Count each outlet once: an A article's own outlet appearing again in section B is not a second outlet. Ignore B headlines that are not about an A story.
+4. Rank stories by number of distinct outlets, then by significance to readers who care about the environment (scale of impact, how new or consequential it is). Breaking or developing news outranks features and opinion.
+
+Respond ONLY with JSON, most important first, up to 12 stories:
+{\"stories\": [{\"articles\": [3, 7], \"outlets\": [\"The Guardian\", \"NYT Climate\"], \"topic\": \"short description\"}]}";
+
+        $text = $this->call_llm($prompt, 1500, 90, $this->accuracy_rules());
+        if (is_wp_error($text)) {
+            $this->log_message('✗ Story ranking failed: ' . $text->get_error_message());
+            return false;
+        }
+        $data = json_decode(trim(preg_replace('/```json\s*|\s*```/', '', $text)), true);
+        if (!is_array($data) || empty($data['stories']) || !is_array($data['stories'])) {
+            $this->log_message('✗ Could not read story ranking: ' . substr($text, 0, 150));
+            return false;
+        }
+
+        // Re-sort by outlet count ourselves (stable: keeps the AI's significance order for ties)
+        $stories = array();
+        foreach ($data['stories'] as $order => $story) {
+            $ids = array();
+            foreach ((isset($story['articles']) ? (array) $story['articles'] : array()) as $n) {
+                $idx = intval(preg_replace('/\D/', '', (string) $n)) - 1;
+                if (isset($articles[$idx])) {
+                    $ids[] = $idx;
+                }
+            }
+            if (empty($ids)) {
+                continue;
+            }
+            $outlets = array_values(array_unique(array_filter(array_map('trim', isset($story['outlets']) ? (array) $story['outlets'] : array()))));
+            $stories[] = array('ids' => $ids, 'outlets' => $outlets, 'order' => $order, 'topic' => isset($story['topic']) ? $story['topic'] : '');
+        }
+        usort($stories, function($a, $b) {
+            $diff = count($b['outlets']) - count($a['outlets']);
+            return $diff !== 0 ? $diff : $a['order'] - $b['order'];
+        });
+
+        // Top 3-5: always 3; a 4th and 5th only when other outlets also cover them
+        $top = array();
+        $also = array();
+        $outlets_by_article = array();
+        $used = array();
+        foreach ($stories as $story) {
+            // Lead with the story's most detailed article; very short articles can't support a summary
+            usort($story['ids'], function($a, $b) use ($articles) {
+                return str_word_count($articles[$b]['full_text']) - str_word_count($articles[$a]['full_text']);
+            });
+            $lead = $story['ids'][0];
+            if (isset($used[$lead])) {
+                continue;
+            }
+            $too_thin = str_word_count($articles[$lead]['full_text']) < 90;
+            foreach ($story['ids'] as $id) {
+                $used[$id] = true;
+            }
+            if (!$too_thin && (count($top) < 3 || (count($top) < 5 && count($story['outlets']) >= 2))) {
+                $top[] = $lead;
+                $outlets_by_article[$lead] = $story['outlets'];
+                $this->log_message('   ★ ' . count($story['outlets']) . ' outlets: ' . $story['topic']);
+            } elseif (count($also) < 6) {
+                $also[] = $lead;
+            }
+        }
+        if (count($top) < 3) {
+            $this->log_message('✗ Story ranking returned fewer than 3 stories');
+            return false;
+        }
+        return array('top' => $top, 'also' => $also, 'outlets' => $outlets_by_article);
+    }
+
+    /**
+     * Write the roundup: a short summary of each top story (from the full EnviroLink article),
+     * each linking to that article, then an "Also today" list of other headlines.
+     * Returns HTML or false.
+     */
+    private function write_ranked_roundup($articles, $ranking) {
+        $stories_text = '';
+        foreach ($ranking['top'] as $n => $i) {
+            $stories_text .= "\nSTORY " . ($n + 1) . ': ' . $articles[$i]['title'] . "\n" . $articles[$i]['full_text'] . "\n";
+        }
+        $count = count($ranking['top']);
+
+        $prompt = "Write today's EnviroLink news briefing: a short summary of each of the {$count} stories below, in the same order.
+
+{$stories_text}
+For each story write:
+- \"heading\": a clear, specific headline of at most 12 words (Title Case)
+- \"summary\": 2 to 4 complete, plain sentences (60 to 80 words in total) giving the key facts: what happened, where, who is affected, and what comes next if the article says so. Use specific details (numbers, places, names) from the story. No commentary about what it 'shows' or 'means', no rhetorical questions.
+
+Each summary must stand on its own; do not refer to the other stories. Never say that information is missing, unclear or unavailable: just state the facts the story gives. Never write \"the article says\", \"according to the article\" or similar: report the facts directly, attributing claims to the people or organizations who made them.
+
+Respond ONLY with JSON: {\"stories\": [{\"heading\": \"...\", \"summary\": \"...\"}]}";
+
+        $text = $this->call_llm($prompt, 2048, 90, $this->accuracy_rules() . "\n\n" . $this->human_style_rules());
+        if (is_wp_error($text)) {
+            $this->log_message('✗ Roundup writing failed: ' . $text->get_error_message());
+            return false;
+        }
+        $data = json_decode(trim(str_replace("\\'", "'", preg_replace('/```json\s*|\s*```/', '', $text))), true);
+        if (!is_array($data) || empty($data['stories']) || count($data['stories']) < $count) {
+            $this->log_message('✗ Could not read roundup stories: ' . substr($text, 0, 150));
+            return false;
+        }
+
+        $html = '';
+        foreach ($ranking['top'] as $n => $i) {
+            $story = $data['stories'][$n];
+            if (empty($story['heading']) || empty($story['summary'])) {
+                return false;
+            }
+            $heading = $this->force_capitalize_known_terms($this->to_title_case(trim($story['heading'])));
+            $html .= '<h2>' . esc_html($heading) . "</h2>\n";
+            $html .= '<p>' . esc_html(trim($story['summary'])) . ' <a href="' . esc_url($articles[$i]['url']) . '">Read more →</a></p>' . "\n\n";
+        }
+        if (!empty($ranking['also'])) {
+            $html .= "<h2>Also Today</h2>\n<ul>\n";
+            foreach ($ranking['also'] as $i) {
+                $html .= '<li><a href="' . esc_url($articles[$i]['url']) . '">' . esc_html($articles[$i]['title']) . "</a></li>\n";
+            }
+            $html .= "</ul>\n";
+        }
+        $this->log_message('✓ Wrote ' . $count . ' top stories and ' . count($ranking['also']) . ' "Also today" links');
+        return $html;
     }
 
     /**

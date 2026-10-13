@@ -261,6 +261,15 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.58.0** (2026-10-13) - Roundup rebuilt: top stories ranked by outlet coverage
+
+- **Why:** The roundup prompt asked for one essay connecting ~30 articles from 50-word snippets; results read as a run-on list of fragments ("details aren't available").
+- **Ranking** (`collect_coverage_headlines()` + `rank_roundup_stories()`): headlines from the last 36h of the article feeds AND ranking-only feeds (option `envirolink_ranking_feeds`, Settings → "Coverage sources for ranking"; default: NYT Climate/US/World, Inside Climate News, Carbon Brief, Yale e360, NPR Environment/News, The Verge climate, EcoWatch, Guardian environment, BBC World). Ranking feeds are only counted, never published. One AI call groups items into specific stories and lists distinct outlets; PHP re-sorts by outlet count (AI significance order breaks ties). Includes stories the aggregator skipped (duplicates/keyword limit).
+- **Selection:** top 3 always, 4th/5th only if covered by ≥2 outlets; each story led by its most detailed article; articles under 90 words can't be top stories.
+- **Writing** (`write_ranked_roundup()`): one AI call writes heading + 60-80 word summary per story from the full EnviroLink article text; PHP builds `<h2>` + `<p>` + "Read more →" link, then an "Also Today" `<ul>` of up to 6 other headlines. Old `generate_roundup_with_ai()` essay prompt kept only as fallback.
+- Headline/dek/photo use the ranked order (lead story first).
+- **`call_llm()` retries once** (5s pause) on empty response, dropped connection, 429 or 5xx; empty-response errors now include the model's stop reason.
+
 **v1.57.0** (2026-10-12) - Wikimedia Commons first for photos of the actual event; photo settings UI cleanup
 
 - **Commons direct search** (`search_commons_candidates()`): searched first, by the story's named subject (new `IMAGE_SUBJECT:` field in the article prompt, `image_subject` in roundup metadata). Openverse's copy of Commons lags; direct search found GOES/MODIS satellite images of the current Hurricane Isaias uploaded the day before. JPEG only (filters maps/charts); credit from Commons `extmetadata` (Artist cleaned by `clean_photo_creator()`, LicenseShortName, LicenseUrl). Commons hosts only free licenses.
