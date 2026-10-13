@@ -261,6 +261,20 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 
 ## Recent Version History
 
+**v1.56.0** (2026-10-12) - Open-licensed photo search (Openverse) with AI photo selection
+
+- **Why:** Roundup and Pexels-feed images were generic (e.g. a plain-water photo for a hurricane + turtles roundup) because the search used one keyword from the headline and fell back to random "nature" queries. News outlets' own photos are copyrighted, so they're not an option.
+- **New flow** (`find_story_image()`): the AI writes 3 photo search phrases (no place names, most specific first) → search Openverse (Flickr, Wikimedia Commons, NASA, Smithsonian…) → if nothing fits, Pexels → the AI looks at thumbnails of up to 12 candidates (`choose_image_with_ai()`, vision via `call_llm(..., $images)`, text-only fallback for models without vision) and picks one or rejects all. No generic fallback photos.
+- **Licenses:** CC0, public domain, CC BY, CC BY-SA, CC BY-NC, CC BY-NC-SA (envirolink.org is ad-free and non-commercial). No-derivatives licenses excluded because WordPress crops/resizes featured images.
+- **Credit:** "Photo: Creator / Source (License)" with links, stored as the attachment caption (`apply_image_credit()`); alt text describes what the photo shows, not the news event.
+- **Where:** daily roundup (Strategy 1, uses `image_queries` from roundup metadata) and articles from feeds with the photo-search checkbox (`use_pexels_images` key kept). Article prompt's IMAGE_KEYWORDS is now 3 phrases separated by semicolons.
+- **Settings:** Openverse Client ID / Secret (register via `register-openverse.sh`; token cached 12h in `envirolink_openverse_token` transient).
+- **Selection rules (tuned on real stories):** first search phrase names the main subject (hurricanes → "hurricane satellite image", NASA imagery); no place names in searches; reject captive animals for wild-animal stories, dim interiors and odd/unsettling scenes; prefer wide photos (candidate `shape` shown to the AI).
+- **Sources:** Openverse limited to real-photo collections: flickr, wikimedia, nasa, inaturalist, geographorguk (rawpixel excluded because it hosts AI-generated images).
+- **No repeats:** photos used in the last 30 days are skipped (`envirolink_recent_photo_urls` option, keyed by source page URL).
+- **No image rather than a copyrighted one:** when photo search finds nothing, articles publish without a featured image (no RSS-image fallback). Roundups still fall back to the manual roundup image collection.
+- **All feeds:** photo search is on for every feed. One-time switch `maybe_enable_photo_search_for_all_feeds()` (flag option `envirolink_photo_search_all_feeds_done`) turns it on for existing feeds; new feeds default to on. A feed can be switched back in Edit Settings.
+
 **v1.55.1** (2026-10-12) - AI Model pulldown with per-company API keys
 
 - Replaces v1.55.0's free-text provider/base URL/model fields with one **AI Model** pulldown: GPT-6 Luna (recommended), GPT-6.1 Sol, Gemini 3.8 Flash, Groq gpt-oss-120b, Anthropic Claude, Custom.
