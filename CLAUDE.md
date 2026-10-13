@@ -272,6 +272,8 @@ Pick it from the AI Model pulldown in EnviroLink News → Settings. For a model 
 - **Selection rules (tuned on real stories):** first search phrase names the main subject (hurricanes → "hurricane satellite image", NASA imagery); no place names in searches; reject captive animals for wild-animal stories, dim interiors and odd/unsettling scenes; prefer wide photos (candidate `shape` shown to the AI).
 - **Sources:** Openverse limited to real-photo collections: flickr, wikimedia, nasa, inaturalist, geographorguk (rawpixel excluded because it hosts AI-generated images).
 - **No repeats:** photos used in the last 30 days are skipped (`envirolink_recent_photo_urls` option, keyed by source page URL).
+- **No image rather than a copyrighted one:** when photo search finds nothing, articles publish without a featured image (no RSS-image fallback). Roundups still fall back to the manual roundup image collection.
+- **All feeds:** photo search is on for every feed. One-time switch `maybe_enable_photo_search_for_all_feeds()` (flag option `envirolink_photo_search_all_feeds_done`) turns it on for existing feeds; new feeds default to on. A feed can be switched back in Edit Settings.
 
 **v1.55.1** (2026-10-12) - AI Model pulldown with per-company API keys
 

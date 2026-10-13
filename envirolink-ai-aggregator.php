@@ -122,7 +122,7 @@ class EnviroLink_AI_Aggregator {
                 'include_pubdate' => true,
                 'include_topic_tags' => true,
                 'include_locations' => true,
-                'use_pexels_images' => false
+                'use_pexels_images' => true // photo search (Openverse/Pexels) instead of RSS images
             )
         );
         
@@ -281,6 +281,7 @@ class EnviroLink_AI_Aggregator {
      * Register settings
      */
     public function register_settings() {
+        $this->maybe_enable_photo_search_for_all_feeds();
         register_setting('envirolink_settings', 'envirolink_feeds');
         register_setting('envirolink_settings', 'envirolink_api_key');
         register_setting('envirolink_settings', 'envirolink_llm_preset');
@@ -395,7 +396,7 @@ class EnviroLink_AI_Aggregator {
                 'include_pubdate' => isset($_POST['include_pubdate']),
                 'include_topic_tags' => isset($_POST['include_topic_tags']),
                 'include_locations' => isset($_POST['include_locations']),
-                'use_pexels_images' => false  // Default to false, can be enabled in Edit Settings
+                'use_pexels_images' => true  // Photo search by default; RSS images are usually copyrighted
             );
             update_option('envirolink_feeds', $feeds);
             
@@ -5198,6 +5199,7 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         @set_time_limit(900);
 
         $api_key = $this->get_llm_api_key();
+        $this->maybe_enable_photo_search_for_all_feeds();
         $feeds = get_option('envirolink_feeds', array());
         $post_category = get_option('envirolink_post_category');
         $post_status = get_option('envirolink_post_status', 'publish');
@@ -5545,7 +5547,9 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
                         $image_url = $found_image['url'];
                         $image_credit = $found_image;
                     } else {
-                        $this->log_message('→ ✗ No suitable photo found, falling back to RSS image (if any)');
+                        // Don't fall back to the RSS image: it's usually the outlet's copyrighted photo
+                        $this->log_message('→ ✗ No suitable photo found - publishing without an image');
+                        $image_url = null;
                     }
                 }
 
@@ -6559,6 +6563,25 @@ Return ONLY the corrected headline, nothing else. If the headline is already cor
         }
 
         return $should_publicize;
+    }
+
+    /**
+     * v1.56.0 one-time switch: turn on photo search for every existing feed.
+     * RSS images are usually the outlet's copyrighted photos; the open-licensed
+     * search replaces them. Feeds can still be switched back in Edit Settings.
+     */
+    private function maybe_enable_photo_search_for_all_feeds() {
+        if (get_option('envirolink_photo_search_all_feeds_done') === 'yes') {
+            return;
+        }
+        $feeds = get_option('envirolink_feeds', array());
+        if (is_array($feeds)) {
+            foreach ($feeds as $index => $feed) {
+                $feeds[$index]['use_pexels_images'] = true;
+            }
+            update_option('envirolink_feeds', $feeds);
+        }
+        update_option('envirolink_photo_search_all_feeds_done', 'yes');
     }
 
     /**
